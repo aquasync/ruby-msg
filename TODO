@@ -1,0 +1,4 @@
+ole.tgz seems to have enough information to decode
+the relevant files.
+rewrite this as a simple ruby class to do the necessary transformations.
+use lazy loading of files.
