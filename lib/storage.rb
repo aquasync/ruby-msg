@@ -12,13 +12,53 @@ module Ole
 		VERSION = '1.0.3'
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
+		def each_block bat, *blocks
+			blocks.each do |block|
+				@io.seek bat.block_size * (block + 1)
+				yield @io.read(bat.block_size)
+			end
+		end
+
+		def each_big_block *blocks, &block
+			each_block @bbat, *blocks, &block
+		end
+
+		def each_small_block *blocks, &block
+			each_block @sbat, *blocks, &block
+		end
+
 		attr_reader :io, :blocks, :header, :fat, :dirs, :root
 		# +io+ needs to be seekable.
 		def initialize io
 			@io = io
 			@blocks = Blocks.new self
 			header_block = blocks[-1]
-			@header = Header.from_str header_block
+			@header = Header.load header_block
+			@bbat = AllocationTable.new self, @header.b_shift
+			@sbat = AllocationTable.new self, @header.s_shift
+			# bbat chain is linear, as there is no other table.
+			# the metabat is a small group of big blocks, made up of longs which are the big block
+			# indices that point to blocks which are the big block allocation table chain.
+			# when loading a stream, you either grab it from the big or small chain depending on its size...
+			bbat_chain = header_block[FAT_START..-1].unpack('L*')
+			@header.num_mbat.times do |i|
+				each_big_block(@header.mbat_start + i) { |s| bbat_chain << s.unpack('L*') }
+			end
+			# trunacate if needed
+			bbat_chain = bbat_chain[0...@header.num_bat] if bbat_chain.length > @header.num_bat
+			@bbat.load_chain bbat_chain
+			p @bbat
+
+			# get block chain for sbat and load it
+			@sbat.load_chain @bbat.get_chain(@header.sbat_start)
+			p @sbat
+
+			# get block chain for directories and load them
+			@names = []
+			each_big_block *@bbat.get_chain(@header.dirent_start) do |str|
+				@names += str.scan(/.{128}/m).map { |s| dir = OleDir.from_str(s); dir.name if dir.type != 0 }.compact
+			end
+			p @names
 			raise "not valid OLE2 structured storage file" unless @header.magic == MAGIC
 
 			# load the fat. i think this is not exactly fat, but fat block numbers.
@@ -85,7 +125,9 @@ module Ole
 			def [] idx
 				raise "block index #{idx.inspect} out of range" unless (-1...@length) === idx
 				@ole.io.seek BLOCK_SIZE * (idx + 1)
-				Block.new @ole.io.read(BLOCK_SIZE)
+				b = Block.new @ole.io.read(BLOCK_SIZE)
+				b.ole = @ole
+				b
 			end
 
 			def each
@@ -102,9 +144,11 @@ module Ole
 			end
 
 			class Block < String
+				attr_accessor :ole
 				def dirs
 					dirs = self.scan(/.{#{OLE_DIR_SIZE}}/mo).
 						map { |str| OleDir.from_str str }
+					dirs.each { |dir| dir.ole = @ole }
 					# sample code cuts at the first NO_ENTRY
 					i = dirs.index dirs.find { |dir| dir.type == 0 }
 					i ? dirs[0...i] : dirs
@@ -113,16 +157,67 @@ module Ole
 		end
 
 		# class which wraps the ole header
-		Header = Struct.new :magic, :unk1, :num_fat_blocks, :root_start_block, :unk2, :unk3,
-			:dir_flag, :unk4, :fat_next_block, :num_extra_fat_blocks
-		HEADER_UNPACK = 'a8 a36 L8' # unpack a string using this to initialize Header
-		MAGIC = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # expected value of Header#magic
-		FAT_START = 0x4c # should be equal to used size of the above HEADER_UNPACK string
-		Header.instance_eval do
-			def self.from_str str
-				Header.new(*str.unpack(HEADER_UNPACK))
+		class Header
+			LEGACY_MEMBERS = [
+				:magic, :unk1, :unk1a, :unk1b, :unk1c, :num_fat_blocks, :root_start_block, :unk2,
+				:unk3, :dir_flag, :unk4, :fat_next_block, :num_extra_fat_blocks
+			]
+			NEW_MEMBERS = [
+				:magic, :unk1, :b_shift, :s_shift, :unk1d, :num_bat, :dirent_start, :unk2, :threshold,
+				:sbat_start, :num_sbat, :mbat_start, :num_mbat
+			]
+
+			# 2 basic initializations, from scratch, or from a data string.
+			def initialize
+				@values = []
+			end
+
+			def self.load str
+				h = Header.new
+				h.to_a.replace str.unpack('a8 a22 S S a10 L8')
+				h
+			end
+
+			[LEGACY_MEMBERS, NEW_MEMBERS].each do |members|
+				members.each_with_index do |sym, i|
+					define_method(sym) { @values[i] }
+				end
+			end
+
+			def to_a
+				@values
+			end
+
+			def inspect
+				"#<#{self.class} " +
+					NEW_MEMBERS.zip(@values).map { |k, v| "#{k}=#{v.inspect}" }.join(" ") +
+					">"
 			end
 		end
+
+		class AllocationTable
+			attr_reader :ole, :block_size, :table
+			def initialize ole, shift
+				@ole = ole
+				@block_size = 1 << shift
+				@table = []
+			end
+
+			def load_chain chain
+				@ole.each_big_block *chain do |s|
+					@table += s.unpack('L*')
+				end
+			end
+
+			def get_chain start
+				return [] if start >= (1 << 32) - 3
+				raise "dodgy chain #{start}" if start < 0 || start > @table.length
+				[start] + get_chain(@table[start])
+			end
+		end
+
+		MAGIC = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # expected value of Header#magic
+		FAT_START = 0x4c # should be equal to used size of the above HEADER_UNPACK string
 
 		# class which wraps an ole dir
 		OleDir = Struct.new :name_utf16, :name_len, :type, :filler1, :prev_dirent, :next_dirent, :dir_dirent,
@@ -131,13 +226,23 @@ module Ole
 		OLE_DIR_SIZE = 128
 		EPOCH = DateTime.parse '1601-01-01'
 		OleDir.class_eval do
-			attr_accessor :idx, :children
+			attr_accessor :idx, :children, :ole
 			def self.from_str str
 				OleDir.new(*str.unpack(OLE_DIR_UNPACK))
 			end
 
 			def name
 				UTF16_TO_UTF8[name_utf16[0...name_len].sub(/\x00\x00$/, '')]
+			end
+
+			def data
+				bat = @ole.instance_variable_get(size > @ole.header.threshold ? :@bbat : :@sbat)
+				chain = bat.get_chain(start_block)
+				p [start_block, bat]
+				p chain
+				data = ''
+				@ole.each_block(bat, *chain) { |s| data << s }
+				data[0, size]
 			end
 
 			def time
@@ -178,6 +283,7 @@ module Ole
 end
 
 if $0 == __FILE__
-	puts Ole::Storage.new(open(ARGV[0])).root.to_tree
+	p Ole::Storage.new(open(ARGV[0])).header
+	#puts Ole::Storage.new(open(ARGV[0])).root.to_tree
 end
 
