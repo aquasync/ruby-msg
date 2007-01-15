@@ -193,7 +193,7 @@ module Ole
 		# class which wraps an ole dir
 		class OleDir
 			MEMBERS = [
-				:name_utf16, :name_len, :type, :colour, :prev, :next, :child,
+				:name_utf16, :name_len, :type_id, :colour, :prev, :next, :child,
 				:clsid, :flags, # dirs only
 				:secs1, :days1, # create time
 				:secs2, :days2, # modify time
@@ -202,6 +202,11 @@ module Ole
 			PACK = 'a64 S C C L3 a16 L7 a4'
 			SIZE = 128
 			EPOCH = DateTime.parse '1601-01-01'
+			TYPE_MAP = {
+				1 => :dir,
+				2 => :file,
+				5 => :root
+			}
 
 			attr_accessor :idx, :children, :ole
 			def initialize
@@ -224,6 +229,19 @@ module Ole
 				msg = size > @ole.header.threshold ? :read_big_blocks : :read_small_blocks
 				chain = bat.chain(first_block)
 				@ole.send msg, chain, size
+			end
+
+			def type
+				TYPE_MAP[type_id] or raise "unknown type #{type_id.inspect}"
+			end
+
+			def dir?
+				# to count root as a dir.
+				type != :file
+			end
+
+			def file?
+				type == :file
 			end
 
 			def data64

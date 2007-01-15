@@ -1,4 +1,120 @@
-ole.tgz seems to have enough information to decode
-the relevant files.
-rewrite this as a simple ruby class to do the necessary transformations.
-use lazy loading of files.
+Generally, the goal of the project is conversion of *.msg files into proper rfc2822
+emails, independent of outlook, or any platform dependencies etc.
+Draws on msgconvert.pl, and tries to be a cleaner and more complete approach.
+
+Ole::Storage
+========================
+- still needs much cleaning
+- proper io streams for data access as opposed to current situation.
+	especially needed for large attachments
+- rewrite tests
+- generalise and test
+- split off as proper separate project?
+- formalise api, document.
+- properly investigate other alternatives, and/or missing features
+- not just read. create and update api too.
+
+Mime
+========================
+- split off into own file.
+- would need to be more general (not just mail related) and standards compliant then
+- test cases etc as above.
+
+Msg
+========================
+- set 'From' in Msg#populate_headers.
+	Notes:
+		# ways to get the sender of a mail.
+		# if external, you can do this (different for internal).
+		name, protocol, email = Ole::UTF16_TO_UTF8[msg.props.sender_entryid[24..-1]].split(/\x00/)
+		# here is an excerpt from a yaml dump.
+		# need to consider how to get it. also when its a draft, and other stuff.
+		creator_name:
+		sent_representing_name:
+		last_modifier_name:
+		sender_email_address:
+		sent_representing_email_address:
+		sender_name:
+- fill out some of the tag holes. mostly done
+- integrate rtf decompression, as pseudo tag. mostly done
+- preliminary mime conversion. mostly done. currently relies on transport_message_headers.
+  need to also support internal mail, where we write all those headers ourselves instead,
+	from the msg.props.
+	like
+	mime.headers['Subject'] = [msg.props.subject]
+	...
+	etc, for heaps of things, like Thread-ID, Message-ID, basics like From, To, CC etc etc.
+	a more advanced possibility is some kind of smart merge, taking information superset, but
+	i think i'll keep it simple for now.
+- figure out some things, like entryids, and the properties directories,
+  and the ntsecurity data 0e27.
+	http://peach.ease.lsoft.com/scripts/wa.exe?A2=ind0207&L=mapi-l&P=24515
+	"In case anybody is interested, Exchange stores PR_NT_SECURITY_DESCRIPTOR as a header plus the regular self=-relative SECURITY_DESCRIPTOR structure. The first two bytes of the header (WORD) is the length of the header; Read these two bytes to find out how many bytes you must skip to get to the real data. Many thanks to Stephen Griffin for this info."
+	using outlook spy gives an actual dump. for example:
+	<<
+	Control: SE_DACL_AUTO_INHERITED | SE_DACL_DEFAULTED | SE_DACL_PRESENT | SE_GROUP_DEFAULTED | SE_OWNER_DEFAULTED | SE_SACL_AUTO_INHERITED | SE_SACL_DEFAULTED | SE_SELF_RELATIVE
+	Owner: 
+		SID: S-1-5-21-1004336348-602609370-725345543-44726
+		Name: lowecha
+		DomainName: XXX
+	Group: 
+		SID: S-1-5-21-1004336348-602609370-725345543-513
+		Name: Domain Users
+		DomainName: XXX
+	Dacl: 
+			Header:
+				AceType: ACCESS_DENIED_ACE_TYPE
+				AceFlags: INHERITED_ACE
+			Mask: fsdrightReadBody (fsdrightListContents) | fsdrightWriteBody (fsdrightCreateItem) | fsdrightAppendMsg (fsdrightCreateContainer) | fsdrightReadProperty | fsdrightWriteProperty | fsdrightExecute | fsdrightReadAttributes | fsdrightWriteAttributes | fsdrightWriteOwnProperty | fsdrightDeleteOwnItem | fsdrightViewItem | fsdrightWriteSD | fsdrightDelete | fsdrightWriteOwner | fsdrightReadControl | fsdrightSynchronize
+			Sid:
+				SID: S-1-5-7
+				Name: ANONYMOUS LOGON
+				DomainName: NT AUTHORITY
+	>>
+	Not something i care about at the moment.
+
+- conversion of inline images.
+  Content-Location, cid: urls etc etc.
+	what would be cool, is conversion of outlooks text/rtf's only real "feature" over
+	text/html - convert inline attachments to be <a href> links, using cid: urls to the
+	actual content data, and using an <img with cid: url to a converted image from the
+	attach_rendering property (image data), along with the text itself. (although i think
+	the rendering may actually include the text ??. that would explain why its always clipped.
+- entryid format cf. entry_id.h. another serialized structure.
+  entryids are for the addressbook connection. EMS (exchange message something), AB
+	address book. MUIDEMSAB. makes sense.
+
+- other stuff copied out of the source file:
+# need to work on reducing this. i think latest platform sdk, and
+# some tnef headers will reduce this list further.
+
+# somehow webdav related. not very interesting
+newer formula, due to escaping:
+	CGI.escape(msg.properties.subject.strip).tr('+', ' ') + '.EML' == msg.properties.url_comp_name
+rs[:cc].sort_by { |r| r.obj.name[/\d{8}$/].hex }
+suppose i should stop trying to figure these out:
+"...The range for named property identifiers is between 0x8000 and 0xFFFE."
+oh.
+
+(mapidefs.h)
+174 /* Types of message receivers */
+175 #ifndef MAPI_ORIG
+176 #define MAPI_ORIG      0          /* The original author */
+177 #define MAPI_TO        1          /* The primary message receiver */
+178 #define MAPI_CC        2          /* A carbon copy receiver */
+179 #define MAPI_BCC       3          /* A blind carbon copy receiver */
+180 #define MAPI_P1        0x10000000 /* A message resend */
+181 #define MAPI_SUBMITTED 0x80000000 /* This message has already been sent */
+182 #endif
+
+when i start handling recipients as well, i get lots more
+unknown property 5ff6
+ * appears to be equal to display_name, and transmitable_display_name
+unknown property 5ff7
+ * recipient.properties.raw['5ff7'].upcase == recipient.properties.entryid
+   is equivalent, but not all uppercase.
+	 everything else is upper though. maybe a displayname kind of thing.
+
+get the property ranges figured out, so i can group
+properties by type (transmitable or not, etc).
+
