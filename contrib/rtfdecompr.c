@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void decompress_rtf(FILE *srcf)
 {
@@ -26,7 +27,7 @@ void decompress_rtf(FILE *srcf)
 
 	#define BUF_MASK 4095		
 
-	int wp = strlen(buf);
+	int wp = strlen((char *)buf);
 
 	unsigned char *dst; // destination for uncompressed bytes
 	int in = 0; // current position in src array

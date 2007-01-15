@@ -72,8 +72,9 @@ module Ole
 			# get block chain for directories and load them
 			@dirs = read_big_blocks(@bbat.chain(@header.dirent_start)).scan(/.{#{OleDir::SIZE}}/mo).
 			# semantics mayn't be quite right. used to cut at first dir where dir.type == 0
-				map { |str| OleDir.load str }.reject { |dir| dir.type == 0 }
+				map { |str| OleDir.load str }.reject { |dir| dir.type_id == 0 }
 			@dirs.each { |dir| dir.ole = self }
+			#p @dirs
 
 			# now reorder from flat into a tree
 			# links are stored in some kind of balanced binary tree
@@ -224,7 +225,7 @@ module Ole
 			end
 
 			def data
-				return nil if type != 2
+				return nil unless file? 
 				bat = @ole.send(size > @ole.header.threshold ? :bbat : :sbat)
 				msg = size > @ole.header.threshold ? :read_big_blocks : :read_small_blocks
 				chain = bat.chain(first_block)
@@ -255,13 +256,13 @@ module Ole
 			def time
 				# time is nil for streams, otherwise try to parse either of the time pairse (not
 				# sure of their meaning - created / modified?)
-				@time ||= type == 2 ? nil : (parse_time(secs1, days1) || parse_time(secs2, days2))
+				@time ||= file? ? nil : (OleDir.parse_time(secs1, days1) || OleDir.parse_time(secs2, days2))
 			end
 
 			# time is made of a high and low 32 bit value, comprising of the 100's of nanoseconds
 			# since 1st january 1601.
 			# struct FILETIME. see eg http://msdn2.microsoft.com/en-us/library/ms724284.aspx
-			def parse_time low, high
+			def self.parse_time low, high
 				time = EPOCH + (high * (1 << 32) + low) * 1e-7 / 86400 rescue nil
 				# extra sanity check...
 				time if time and (1800...2100) === time.year

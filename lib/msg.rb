@@ -4,12 +4,8 @@ $: << './lib'
 
 require 'yaml'
 require 'base64'
-require 'ostruct'
-require 'iconv'
 require 'ole/storage'
-
-# just for backported Array#group_by
-require 'std'
+require 'support'
 
 #
 # Mime class
@@ -81,7 +77,7 @@ class Mime
 	def to_tree
 		if multipart?
 			str = "- #{inspect}\n"
-		  parts.each_with_index do |part, i|
+			parts.each_with_index do |part, i|
 				last = i == parts.length - 1
 				part.to_tree.split(/\n/).each_with_index do |line, j|
 					str << "  #{last ? (j == 0 ? "\\" : ' ') : '|'}" + line + "\n"
@@ -235,7 +231,7 @@ FIXME: look at data/content_classes information
 			next if headers[kind].empty?
 			kind.downcase + '=' + headers[kind].join(' ').inspect.gsub(/\\"/, "'")
 		end.compact.join(' ')
-		to   = headers['To'].join(' ').inspect.gsub(/\\"/, "'")
+		to = headers['To'].join(' ').inspect.gsub(/\\"/, "'")
 		"#<Msg subject=#{props.subject.inspect} #{str} kind=#{kind.inspect}>"
 	end
 
@@ -367,7 +363,8 @@ FIXME: look at data/content_classes information
 #						p [property, data[4..-1].unpack('H*')[0]]
 						add_property property, data[8, 4].unpack('L')[0] != 0
 					when '0040' # systime
-						p [property, data[4..-1].unpack('H*')[0]]
+						# seems to work:
+						add_property property, Ole::Storage::OleDir.parse_time(*data[8..-1].unpack('L*'))
 					else
 						warn "ignoring data in __properties section, encoding: #{encoding}"
 					end
@@ -490,13 +487,9 @@ FIXME: look at data/content_classes information
 
 		alias to_s :data
 
-		def inspect
-			"#<Attachment filename=#{filename.inspect}>"
-		end
-
 		def to_mime
 			# TODO: smarter mime typing.
-			# it kind of sucks, having all this stuff in memory. ole and mime should support
+			# it kind of sucks, having all this stuff in memory. Ole and Mime classes should support
 			# streams. for ole, if data length > 1024, it could automatically just become a
 			# promise, wrapping a stream. most methods wouold just force the load to mem and then
 			# it would delegate to the string. however, #to_io could return underlying io object.
@@ -517,6 +510,10 @@ FIXME: look at data/content_classes information
 			mime.headers['Content-Transfer-Encoding'] = ['base64']
 			mime.body.replace Base64.encode64(data).gsub(/\n/, "\r\n")
 			mime
+		end
+
+		def inspect
+			"#<#{self.class.to_s[/\w+$/]} filename=#{filename.inspect}>"
 		end
 	end
 
@@ -573,7 +570,7 @@ FIXME: look at data/content_classes information
 		end
 
 		def inspect
-			"#<Recipient:#{self.to_s.inspect}>"
+			"#<#{self.class.to_s[/\w+$/]}:#{self.to_s.inspect}>"
 		end
 	end
 end
@@ -581,8 +578,8 @@ end
 
 if $0 == __FILE__
 	msg = Msg.load open(ARGV[0])
-	puts msg.to_mime.to_s
-	p msg
+	#puts msg.to_mime.to_s
+	#p msg
 end
 
 =begin
@@ -624,7 +621,7 @@ def parse_nameid obj
 			end
 			pp [:names, child.name, names]
 		else
-				pp [:unknown, child.name, child.data.unpack('H*')[0].scan(/.{16}/m)]
+			pp [:unknown, child.name, child.data.unpack('H*')[0].scan(/.{16}/m)]
 		end
 	end
 	nil
@@ -645,4 +642,3 @@ r2[:bcc]
 ... etc
 
 =end
-
