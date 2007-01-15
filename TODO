@@ -2,6 +2,13 @@ Generally, the goal of the project is conversion of *.msg files into proper rfc2
 emails, independent of outlook, or any platform dependencies etc.
 Draws on msgconvert.pl, and tries to be a cleaner and more complete approach.
 
+Highest priority
+------------------------
+* get some sort of working From: header
+* similarly, with new date support, add Sent:
+* clean up warnings.
+* get some clean test msgs from somewhere
+
 Ole::Storage
 ========================
 - still needs much cleaning
