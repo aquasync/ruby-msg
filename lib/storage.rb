@@ -12,77 +12,73 @@ module Ole
 		VERSION = '1.0.3'
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
-		def each_block bat, *blocks
+		attr_reader :io, :header, :bbat, :sbat, :dirs, :sb_blocks, :root
+		def initialize
+		end
+
+		def read_big_blocks blocks, size=nil
+			block_size = 1 << @header.b_shift
+			data = ''
 			blocks.each do |block|
-				@io.seek bat.block_size * (block + 1)
-				yield @io.read(bat.block_size)
+				@io.seek block_size * (block + 1)
+				data << @io.read(block_size)
 			end
+			data = data[0, size] if size and size < data.length
+			data
 		end
 
-		def each_big_block *blocks, &block
-			each_block @bbat, *blocks, &block
+		def read_small_blocks blocks, size=nil
+			data = ''
+			blocks.each do |block|
+				# interesting... small blocks are mapped to big blocks in a peculiar way they can be shifted
+				# around arbitrarily, and you just update the sb_blocks map. without adjusting the allocation
+				# table. it is an extra layer of indirection.
+				idx, pos = (block * (1 << @header.s_shift)).divmod 1 << @header.b_shift
+				pos += (1 << @header.b_shift) * (@sb_blocks[idx] + 1)
+				@io.seek pos
+				data << @io.read(1 << @header.s_shift)
+			end
+			data = data[0, size] if size and size < data.length
+			data
 		end
 
-		def each_small_block *blocks, &block
-			each_block @sbat, *blocks, &block
+		def self.load io
+			ole = Storage.new
+			ole.load io
+			ole
 		end
 
-		attr_reader :io, :blocks, :header, :fat, :dirs, :root
 		# +io+ needs to be seekable.
-		def initialize io
+		def load io
 			@io = io
-			@blocks = Blocks.new self
-			header_block = blocks[-1]
+
+			# we always read 512 for the header block. if the block size ends up being different,
+			# what happens to the 109 fat entries. are there more/less entries?
+			@io.seek 0
+			header_block = @io.read 512
+
 			@header = Header.load header_block
-			@bbat = AllocationTable.new self, @header.b_shift
-			@sbat = AllocationTable.new self, @header.s_shift
+			raise "not valid OLE2 structured storage file" unless @header.magic == MAGIC
+
 			# bbat chain is linear, as there is no other table.
 			# the metabat is a small group of big blocks, made up of longs which are the big block
 			# indices that point to blocks which are the big block allocation table chain.
 			# when loading a stream, you either grab it from the big or small chain depending on its size...
-			bbat_chain = header_block[FAT_START..-1].unpack('L*')
-			@header.num_mbat.times do |i|
-				each_big_block(@header.mbat_start + i) { |s| bbat_chain << s.unpack('L*') }
-			end
-			# trunacate if needed
-			bbat_chain = bbat_chain[0...@header.num_bat] if bbat_chain.length > @header.num_bat
-			@bbat.load_chain bbat_chain
-			p @bbat
+			# note also some of the data coming from header block.
+			# that provides an array of indices, which are loaded by the bbat.
+			bbat_chain_data =
+				header_block[FAT_START..-1] +
+				read_big_blocks((0...@header.num_mbat).map { |i| @header.mbat_start + i })
 
-			# get block chain for sbat and load it
-			@sbat.load_chain @bbat.get_chain(@header.sbat_start)
-			p @sbat
+			@bbat = AllocationTable.load self, bbat_chain_data.unpack('L*')[0, @header.num_bat]
+			@sbat = AllocationTable.load self, @bbat.chain(@header.sbat_start)
 
 			# get block chain for directories and load them
-			@names = []
-			each_big_block *@bbat.get_chain(@header.dirent_start) do |str|
-				@names += str.scan(/.{128}/m).map { |s| dir = OleDir.from_str(s); dir.name if dir.type != 0 }.compact
-			end
-			p @names
-			raise "not valid OLE2 structured storage file" unless @header.magic == MAGIC
-
-			# load the fat. i think this is not exactly fat, but fat block numbers.
-			# the closing if seems redundant but existed in sample code
-			@fat = header_block[FAT_START..-1].unpack('L*')
-			(0...@header.num_extra_fat_blocks).inject @header.fat_next_block do |i|
-				ints = @blocks[i].unpack('L*')
-				i = ints.shift
-				@fat << ints
-				i
-			end if @header.fat_next_block > 0
-
-			# get directories
-			blknum = @header.root_start_block
-			@dirs = @blocks[blknum].dirs
-			while true
-				fat = @blocks.get_fat_block blknum
-				# is this % 128 just for array boundary reasons?. should it really be invalid?
-				blknum = fat[blknum % 128]
-				break if blknum == (1 << 32) - 2
-				dirs = @blocks[blknum].dirs
-				@dirs += dirs
-				break unless dirs.length == 4
-			end
+			#dirs = read_big_blocks(@bbat.get_chain(@header.dirent_start)).scan(/.{128}/m).
+			@dirs = read_big_blocks(@bbat.chain(@header.dirent_start)).scan(/.{128}/m).
+			# semantics mayn't be quite right. used to cut at first dir where dir.type == 0
+				map { |str| OleDir.from_str str }.reject { |dir| dir.type == 0 }
+			@dirs.each { |dir| dir.ole = self }
 
 			# now reorder from flat into a tree
 			# links are stored in some kind of balanced binary tree
@@ -99,61 +95,15 @@ module Ole
 				end
 			end
 			@root = @dirs.to_tree.first
+			@sb_blocks = @bbat.chain @root.start_block
 
 			# extra check
 			unused = @dirs.reject { |dir| dir.idx }.length
-			warn "* #{unused} unused directories after to_tree" if unused > 0
+			warn "* #{unused} unused directories" if unused > 0
 		end
 
 		def inspect
-			"#<#{self.class} @io=#{@io.inspect} @root=#{@root.inspect}>"
-		end
-
-		# class to provide access to the file as a pseudo array of blocks
-		# blocks[-1] is the header block with some fat pointers, blocks[0] is typically the first
-		# fat block, and blocks[1] is typically the first directory block
-		class Blocks
-			BLOCK_SIZE = 512
-			include Enumerable
-			attr_reader :length
-
-			def initialize ole
-				@ole = ole
-				@length = (@ole.io.stat.size + BLOCK_SIZE - 1) / BLOCK_SIZE - 1
-			end
-
-			def [] idx
-				raise "block index #{idx.inspect} out of range" unless (-1...@length) === idx
-				@ole.io.seek BLOCK_SIZE * (idx + 1)
-				b = Block.new @ole.io.read(BLOCK_SIZE)
-				b.ole = @ole
-				b
-			end
-
-			def each
-				# needless seeking
-				length.times { |i| yield self[i] }
-			end
-
-			def get_fat_block idx
-				# find the block that corresponds to the given block. each fat block has 128 entries.
-				# further we divide by 128 here. still, it doesn't make sense yet.
-				fat_idx = @ole.fat[idx / (BLOCK_SIZE / 4)]
-				raise "invalid fat block for #{idx.inspect}" if fat_idx == (1 << 32) - 1
-				self[fat_idx].unpack('L*')
-			end
-
-			class Block < String
-				attr_accessor :ole
-				def dirs
-					dirs = self.scan(/.{#{OLE_DIR_SIZE}}/mo).
-						map { |str| OleDir.from_str str }
-					dirs.each { |dir| dir.ole = @ole }
-					# sample code cuts at the first NO_ENTRY
-					i = dirs.index dirs.find { |dir| dir.type == 0 }
-					i ? dirs[0...i] : dirs
-				end
-			end
+			"#<#{self.class} io=#{@io.inspect} root=#{@root.inspect}>"
 		end
 
 		# class which wraps the ole header
@@ -196,23 +146,26 @@ module Ole
 		end
 
 		class AllocationTable
-			attr_reader :ole, :block_size, :table
-			def initialize ole, shift
+			attr_reader :ole, :table
+			def initialize ole
 				@ole = ole
-				@block_size = 1 << shift
 				@table = []
 			end
 
-			def load_chain chain
-				@ole.each_big_block *chain do |s|
-					@table += s.unpack('L*')
-				end
+			def self.load ole, chain
+				at = AllocationTable.new ole
+				at.load chain
+				at
 			end
 
-			def get_chain start
+			def load chain
+				@table = @ole.read_big_blocks(chain).unpack 'L*'
+			end
+
+			def chain start
 				return [] if start >= (1 << 32) - 3
 				raise "dodgy chain #{start}" if start < 0 || start > @table.length
-				[start] + get_chain(@table[start])
+				[start] + chain(@table[start])
 			end
 		end
 
@@ -236,13 +189,22 @@ module Ole
 			end
 
 			def data
+				return nil if type != 2
 				bat = @ole.instance_variable_get(size > @ole.header.threshold ? :@bbat : :@sbat)
-				chain = bat.get_chain(start_block)
-				p [start_block, bat]
-				p chain
-				data = ''
-				@ole.each_block(bat, *chain) { |s| data << s }
-				data[0, size]
+				msg = size > @ole.header.threshold ? :read_big_blocks : :read_small_blocks
+				chain = bat.chain(start_block)
+				#p chain
+				#p [start_block, bat]
+				#p chain
+				@ole.send msg, chain, size
+			end
+
+			def data64
+				require 'base64'
+				d = Base64.encode64(data[0..100]).delete("\n")
+				d.length > 16 ? d[0..13] + '...' : d
+				rescue
+				nil
 			end
 
 			def time
@@ -275,15 +237,18 @@ module Ole
 			end
 
 			def inspect
-#				"#<OleDir:#{name.inspect} size=#{size} #{[secs1, days1, secs2, days2].inspect}>"
-				"#<OleDir:#{name.inspect} size=#{size}#{time ? ' time=' + time.to_s.inspect : nil}>"
+				data = self.data64
+				"#<OleDir:#{name.inspect} size=#{size}" +
+					"#{time ? ' time=' + time.to_s.inspect : nil}" +
+					"#{data ? ' data=' + data.inspect : nil}" +
+					">"
 			end
 		end
 	end
 end
 
 if $0 == __FILE__
-	p Ole::Storage.new(open(ARGV[0])).header
-	#puts Ole::Storage.new(open(ARGV[0])).root.to_tree
+	#p Ole::Storage.new(open(ARGV[0])).header
+	puts Ole::Storage.load(open(ARGV[0])).root.to_tree
 end
 

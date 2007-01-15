@@ -36,8 +36,8 @@ class TestStorage < Test::Unit::TestCase
 		# there is only one fat block in this file
 		assert_equal [0], @ole.fat.reject { |i| i == (1 << 32) - 1 }, 'fat pointer table'
 		# the fat block has all the numbers from 5..118 bar 117
-		assert_equal (5..118).to_a - [117], @ole.blocks.get_fat_block(0).
-			reject { |i| i >= (1 << 32) - 3 }.sort, 'fat block'
+		assert_equal((5..118).to_a - [117], @ole.blocks.get_fat_block(0).
+			reject { |i| i >= (1 << 32) - 3 }.sort, 'fat block')
 	end
 
 	def test_directories
