@@ -4,12 +4,13 @@ require 'iconv'
 require 'date'
 
 module Ole
-	# class to provide access to OLE2 structured storage files, such as those produced by
+	# basic class to provide access to OLE2 structured storage files, such as those produced by
 	# microsoft office, eg *.doc, *.msg etc.
 	# based on chicago's libole, source available at
 	# http://prdownloads.sf.net/chicago/ole.tgz
+	# augmented later by pole, and a bit from gsf.
 	class Storage
-		VERSION = '1.0.3'
+		VERSION = '1.0.5'
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
 		attr_reader :io, :header, :bbat, :sbat, :dirs, :sb_blocks, :root
@@ -30,9 +31,8 @@ module Ole
 		def read_small_blocks blocks, size=nil
 			data = ''
 			blocks.each do |block|
-				# interesting... small blocks are mapped to big blocks in a peculiar way they can be shifted
-				# around arbitrarily, and you just update the sb_blocks map. without adjusting the allocation
-				# table. it is an extra layer of indirection.
+				# small blocks are essentially files within a a small block file.
+				# this does an efficient map, of a small block file to its position in the parent file.
 				idx, pos = (block * (1 << @header.s_shift)).divmod 1 << @header.b_shift
 				pos += (1 << @header.b_shift) * (@sb_blocks[idx] + 1)
 				@io.seek pos
@@ -50,15 +50,12 @@ module Ole
 
 		# +io+ needs to be seekable.
 		def load io
-			@io = io
-
 			# we always read 512 for the header block. if the block size ends up being different,
 			# what happens to the 109 fat entries. are there more/less entries?
+			@io = io
 			@io.seek 0
 			header_block = @io.read 512
-
 			@header = Header.load header_block
-			raise "not valid OLE2 structured storage file" unless @header.magic == MAGIC
 
 			# bbat chain is linear, as there is no other table.
 			# the metabat is a small group of big blocks, made up of longs which are the big block
@@ -67,39 +64,37 @@ module Ole
 			# note also some of the data coming from header block.
 			# that provides an array of indices, which are loaded by the bbat.
 			bbat_chain_data =
-				header_block[FAT_START..-1] +
-				read_big_blocks((0...@header.num_mbat).map { |i| @header.mbat_start + i })
-
+				header_block[Header::SIZE..-1] +
+				read_big_blocks((0...@header.num_mbat).map { |i| i + @header.mbat_start })
 			@bbat = AllocationTable.load self, bbat_chain_data.unpack('L*')[0, @header.num_bat]
 			@sbat = AllocationTable.load self, @bbat.chain(@header.sbat_start)
 
 			# get block chain for directories and load them
-			#dirs = read_big_blocks(@bbat.get_chain(@header.dirent_start)).scan(/.{128}/m).
-			@dirs = read_big_blocks(@bbat.chain(@header.dirent_start)).scan(/.{128}/m).
+			@dirs = read_big_blocks(@bbat.chain(@header.dirent_start)).scan(/.{#{OleDir::SIZE}}/mo).
 			# semantics mayn't be quite right. used to cut at first dir where dir.type == 0
-				map { |str| OleDir.from_str str }.reject { |dir| dir.type == 0 }
+				map { |str| OleDir.load str }.reject { |dir| dir.type == 0 }
 			@dirs.each { |dir| dir.ole = self }
 
 			# now reorder from flat into a tree
 			# links are stored in some kind of balanced binary tree
-			# could maybe check that everything is visited only once, and that everything is covered.
+			# check that everything is visited at least, and at most once
 			# similarly with the blocks of the file.
 			class << @dirs
 				def to_tree idx=0
 					return [] if idx == (1 << 32) - 1
 					dir = self[idx]
-					dir.children = to_tree dir.dir_dirent
+					dir.children = to_tree dir.child
 					raise "directory #{dir.inspect} used twice" if dir.idx
 					dir.idx = idx
-					to_tree(dir.prev_dirent) + [dir] + to_tree(dir.next_dirent)
+					to_tree(dir.prev) + [dir] + to_tree(dir.next)
 				end
 			end
-			@root = @dirs.to_tree.first
-			@sb_blocks = @bbat.chain @root.start_block
 
-			# extra check
+			@root = @dirs.to_tree.first
 			unused = @dirs.reject { |dir| dir.idx }.length
 			warn "* #{unused} unused directories" if unused > 0
+
+			@sb_blocks = @bbat.chain @root.first_block
 		end
 
 		def inspect
@@ -108,30 +103,60 @@ module Ole
 
 		# class which wraps the ole header
 		class Header
-			LEGACY_MEMBERS = [
-				:magic, :unk1, :unk1a, :unk1b, :unk1c, :num_fat_blocks, :root_start_block, :unk2,
-				:unk3, :dir_flag, :unk4, :fat_next_block, :num_extra_fat_blocks
-			]
-			NEW_MEMBERS = [
-				:magic, :unk1, :b_shift, :s_shift, :unk1d, :num_bat, :dirent_start, :unk2, :threshold,
+			MEMBERS = [
+				:magic, :clsid, :minor_ver, :major_ver, :byte_order, :b_shift, :s_shift,
+				:reserved, :csectdir, :num_bat, :dirent_start, :transacting_signature, :threshold,
 				:sbat_start, :num_sbat, :mbat_start, :num_mbat
 			]
+			PACK = 'a8 a16 S2 a2 S2 a6 L3 a4 L6'
+			SIZE = 0x4c
+			MAGIC = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # expected value of Header#magic
 
 			# 2 basic initializations, from scratch, or from a data string.
+			# from scratch will be geared towards creating a new ole object
 			def initialize
 				@values = []
 			end
 
 			def self.load str
 				h = Header.new
-				h.to_a.replace str.unpack('a8 a22 S S a10 L8')
+				h.to_a.replace str.unpack(PACK)
+				h.validate!
 				h
 			end
 
-			[LEGACY_MEMBERS, NEW_MEMBERS].each do |members|
-				members.each_with_index do |sym, i|
-					define_method(sym) { @values[i] }
+			def validate!
+				raise "OLE2 signature is invalid" unless magic == MAGIC
+				if num_bat == 0 or # is that valid for a completely empty file?
+					 # not sure about this one. basically to do max possible bat given size of mbat
+					 num_bat > 109 && num_bat > 109 + num_mbat * (1 << b_shift - 2) or
+					 # shouldn't need to use the mbat as there is enough space in the header block
+					 num_bat < 109 && num_mbat != 0 or
+					 # given the size of the header is 76, if b_shift <= 6, blocks address the header.
+					 s_shift > b_shift or b_shift <= 6 or b_shift >= 31 or
+					 # we only handle little endian
+					 byte_order != "\xfe\xff"
+					raise "not valid OLE2 structured storage file"
 				end
+				if transacting_signature != "\x00" * 4 or
+				   threshold != 4096 or
+					 reserved != "\x00" * 6
+					warn "may not be a valid OLE2 structured storage file"
+				end
+				true
+			end
+
+			def b_size
+				@b_size ||= 1 << b_shift
+			end
+
+			def s_size
+				@s_size ||= 1 << s_shift
+			end
+
+			MEMBERS.each_with_index do |sym, i|
+				define_method(sym) { @values[i] }
+				define_method(sym.to_s + '=') { |val| @values[i] = val }
 			end
 
 			def to_a
@@ -140,7 +165,7 @@ module Ole
 
 			def inspect
 				"#<#{self.class} " +
-					NEW_MEMBERS.zip(@values).map { |k, v| "#{k}=#{v.inspect}" }.join(" ") +
+					MEMBERS.zip(@values).map { |k, v| "#{k}=#{v.inspect}" }.join(" ") +
 					">"
 			end
 		end
@@ -154,34 +179,39 @@ module Ole
 
 			def self.load ole, chain
 				at = AllocationTable.new ole
-				at.load chain
+				at.table.replace ole.read_big_blocks(chain).unpack('L*')
 				at
-			end
-
-			def load chain
-				@table = @ole.read_big_blocks(chain).unpack 'L*'
 			end
 
 			def chain start
 				return [] if start >= (1 << 32) - 3
-				raise "dodgy chain #{start}" if start < 0 || start > @table.length
+				raise "broken allocationtable chain" if start < 0 || start > @table.length
 				[start] + chain(@table[start])
 			end
 		end
 
-		MAGIC = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # expected value of Header#magic
-		FAT_START = 0x4c # should be equal to used size of the above HEADER_UNPACK string
-
 		# class which wraps an ole dir
-		OleDir = Struct.new :name_utf16, :name_len, :type, :filler1, :prev_dirent, :next_dirent, :dir_dirent,
-			:unk1, :secs1, :days1, :secs2, :days2, :start_block, :size, :unk2
-		OLE_DIR_UNPACK = 'a64 S C C L3 a20 L7'
-		OLE_DIR_SIZE = 128
-		EPOCH = DateTime.parse '1601-01-01'
-		OleDir.class_eval do
+		class OleDir
+			MEMBERS = [
+				:name_utf16, :name_len, :type, :colour, :prev, :next, :child,
+				:clsid, :flags, # dirs only
+				:secs1, :days1, # create time
+				:secs2, :days2, # modify time
+				:first_block, :size, :reserved
+			]
+			PACK = 'a64 S C C L3 a16 L7 a4'
+			SIZE = 128
+			EPOCH = DateTime.parse '1601-01-01'
+
 			attr_accessor :idx, :children, :ole
-			def self.from_str str
-				OleDir.new(*str.unpack(OLE_DIR_UNPACK))
+			def initialize
+				@values = []
+			end
+
+			def self.load str
+				dir = OleDir.new
+				dir.to_a.replace str.unpack(PACK)
+				dir
 			end
 
 			def name
@@ -190,12 +220,9 @@ module Ole
 
 			def data
 				return nil if type != 2
-				bat = @ole.instance_variable_get(size > @ole.header.threshold ? :@bbat : :@sbat)
+				bat = @ole.send(size > @ole.header.threshold ? :bbat : :sbat)
 				msg = size > @ole.header.threshold ? :read_big_blocks : :read_small_blocks
-				chain = bat.chain(start_block)
-				#p chain
-				#p [start_block, bat]
-				#p chain
+				chain = bat.chain(first_block)
 				@ole.send msg, chain, size
 			end
 
@@ -236,6 +263,14 @@ module Ole
 				end
 			end
 
+			MEMBERS.each_with_index do |sym, i|
+				define_method(sym) { @values[i] }
+			end
+
+			def to_a
+				@values
+			end
+
 			def inspect
 				data = self.data64
 				"#<OleDir:#{name.inspect} size=#{size}" +
@@ -248,7 +283,6 @@ module Ole
 end
 
 if $0 == __FILE__
-	#p Ole::Storage.new(open(ARGV[0])).header
 	puts Ole::Storage.load(open(ARGV[0])).root.to_tree
 end
 
