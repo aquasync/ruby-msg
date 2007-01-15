@@ -5,9 +5,17 @@ Draws on msgconvert.pl, and tries to be a cleaner and more complete approach.
 Highest priority
 ------------------------
 * get some sort of working From: header
+  there doesn't appear to be a way to get an smtp address for the sender in an
+  internal mail. you need to query the exchanger server, using the sender_entryid
+  as far as i can tell.
+  you may also get these so called "X.400" addresses for external recipients
+  that are on the GAL (Global Address List), as custom recipients.
 * similarly, with new date support, add Sent:
 * clean up warnings.
 * get some clean test msgs from somewhere
+
+hmmmm for future work:
+http://blogs.msdn.com/stephen_griffin/archive/2005/10/25/484656.aspx
 
 Ole::Storage
 ========================
