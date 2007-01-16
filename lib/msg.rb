@@ -578,7 +578,7 @@ end
 
 if $0 == __FILE__
 	msg = Msg.load open(ARGV[0])
-	#puts msg.to_mime.to_s
+	puts msg.to_mime.to_s
 	#p msg
 end
 

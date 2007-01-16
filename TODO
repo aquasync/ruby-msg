@@ -13,6 +13,16 @@ Highest priority
 * similarly, with new date support, add Sent:
 * clean up warnings.
 * get some clean test msgs from somewhere
+* named properties, and further property completeness. initial work done
+  there, on parsing the nameid section.
+  involves some guid stuff
+* ole code is suppopsed to be able to return guids for something too. supporting
+  all this probably means creating a new file for ole/types.rb, containing all
+  the various classes, and binary conversion code.
+  
+longer term, i want to investigate the overlap with PST stuff, like libpst,
+which seems to be another kind of mapi tag property storage, and try to
+understand the relationship with existing TNEF work also.
 
 hmmmm for future work:
 http://blogs.msdn.com/stephen_griffin/archive/2005/10/25/484656.aspx
