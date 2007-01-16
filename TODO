@@ -10,12 +10,16 @@ Highest priority
   as far as i can tell.
   you may also get these so called "X.400" addresses for external recipients
   that are on the GAL (Global Address List), as custom recipients.
-* similarly, with new date support, add Sent:
-* clean up warnings.
-* get some clean test msgs from somewhere
+  (mostly complete. better way?)
+* similarly, with new date support, add Date:
+  (mostly complete. time zone worries?)
+* clean up warnings. move to using a logger for warnings.
 * named properties, and further property completeness. initial work done
-  there, on parsing the nameid section.
+  there, on parsing the nameid section. and the small properties section.
   involves some guid stuff
+* get some clean test msgs from somewhere
+* tackle other types of msgs, such as appointments, contacts etc, converting
+  to their appropriate standard types too.
 * ole code is suppopsed to be able to return guids for something too. supporting
   all this probably means creating a new file for ole/types.rb, containing all
   the various classes, and binary conversion code.
@@ -116,7 +120,6 @@ Msg
 # somehow webdav related. not very interesting
 newer formula, due to escaping:
 	CGI.escape(msg.properties.subject.strip).tr('+', ' ') + '.EML' == msg.properties.url_comp_name
-rs[:cc].sort_by { |r| r.obj.name[/\d{8}$/].hex }
 suppose i should stop trying to figure these out:
 "...The range for named property identifiers is between 0x8000 and 0xFFFE."
 oh.

@@ -137,7 +137,7 @@ end
 #
 
 class Msg
-	attr_reader :obj, :attachments, :recipients, :headers, :properties
+	attr_reader :ole, :attachments, :recipients, :headers, :properties
 	alias props :properties
 
 	def self.load io
@@ -149,20 +149,15 @@ class Msg
 		@ole = ole
 		@root = @ole.root
 
-		@attachments = []
-		@recipients = []
-		@properties = Properties.new
-
 		warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
 
-		# process the direct children of the root.
-		@root.children.each do |child|
-			if child.file?
-				# treat everything else as a property.
-				begin   @properties << child
-				rescue; warn $!
-				end
-			else
+		@attachments = []
+		@recipients = []
+		@properties = Properties.load @root
+
+		# process the children which aren't properties
+		@properties.unused.each do |child|
+			if child.dir?
 				case child.name
 				# these first 2 will actually be of the form
 				# 1\.0_#([0-9A-Z]{8}), where $1 is the 0 based index number in hex
@@ -198,21 +193,86 @@ class Msg
 		# other stuff. what happens to a person who has a " in their name etc etc. encoded words
 		# i suppose. but that then happens before assignment. and can't be automatically undone
 		# until the header is decomposed into recipients.
-		for kind, recips in recipients.group_by { |r| r.kind }
+		for type, recips in recipients.group_by { |r| r.type }
 			# details of proper escaping and whatever etc are the job of recipient.to_s
 			# don't know if this sort is really needed. header folding isn't our job
-			headers[kind.to_s.sub(/^(.)/) { $1.upcase }] =
-				[recips.sort_by { |r| r.obj.name[/\d{8}$/].hex }.join(" ")]
+			# don't know why i bother, but if we can, we try to sort recipients by the numerical part
+			# of the ole name.
+			recips = (recips.sort_by { |r| r.obj.name[/\d{8}$/].hex } rescue recips)
+			# are you supposed to use ; or , to separate?
+			headers[type.to_s.sub(/^(.)/) { $1.upcase }] = [recips.join("; ")]
 		end
 		headers['Subject'] = [props.subject]
+
+		# construct a From value
+		# should this kind of thing only be done when headers don't exist already? maybe not. if its
+		# sent, then modified and saved, the headers could be wrong?
+		# hmmm. i just had an example where a mail is sent, from an internal user, but it has transport
+		# headers, i think because one recipient was external. the only place the senders email address
+		# exists is in the transport headers. so its maybe not good to overwrite from.
+		# recipients however usually have smtp address available.
+		# maybe we'll do it for all addresses that are smtp? (is that equivalent to 
+		# sender_email_address !~ /^\//
+		name, email = props.sender_name, props.sender_email_address
+		if props.sender_addrtype == 'SMTP'
+			headers['From'] = if name and email and name != email
+				[%{"#{name}" <#{email}>}]
+			else
+				[email || name]
+			end
+		elsif !self.from
+			# some messages were never sent, so that sender stuff isn't filled out. need to find another
+			# way to get something
+			# what about marking whether we thing the email was sent or not? or draft?
+			# for partition into an eventual Inbox, Sent, Draft mbox set?
+			if name or email
+				warn "* no smtp sender email address available (only X.400). creating fake one"
+				# this is crap. though i've specially picked the logic so that it generates the correct
+				# email addresses in my case.
+				user = name.sub /(.*), (.*)/, "\\2.\\1"
+				domain = email[%r{^/O=([^/]+)}i, 1].downcase + '.com'
+				headers['From'] = [%{"#{name}" <#{user}@#{domain}>}]
+			else
+				warn "* no sender email address available at all. FIXME"
+			end
+		# else we leave the transport message header version
+		end
+
+		# fill in a date value. by default, we won't mess with existing value hear
+		if headers['Date'].empty?
+			# we want to get a received date, as i understand it.
+			# use this preference order, or pull the most recent?
+			keys = %w[message_delivery_time client_submit_time last_modification_time creation_time]
+			time = keys.each { |key| break time if time = props.send(key) }
+			time = nil unless Date === time
+			# can employ other methods for getting a time. heres one in a similar vein to msgconvert.pl,
+			# ie taking the time from an ole object
+			time ||= @ole.dirs.map { |dir| dir.time }.compact.sort.last
+
+			# now convert and store
+			# this is a little funky. not sure about time zone stuff either?
+			# actually seems ok. maybe its always UTC and interpreted anyway. or can be timezoneless.
+			# i have no timezone info anyway.
+			# in gmail, i see stuff like 15 Jan 2007 00:48:19 -0000, and it displays as 11:48.
+			# similarly, if I output 
+			require 'time'
+			headers['Date'] = [Time.iso8601(time.to_s).rfc2822] if time
+		end
+
+		if headers['Message-ID'].empty? and props.internet_message_id
+			headers['Message-ID'] = [props.internet_message_id]
+		end
+		if headers['In-Reply-To'].empty? and props.in_reply_to_id
+			headers['In-Reply-To'] = [props.in_reply_to_id]
+		end
 	end
 
 	def ignore obj
-		warn "* ignoring #{obj.name} (#{obj.kind.to_s})"
+		warn "* ignoring #{obj.name} (#{obj.type.to_s})"
 	end
 
 =begin
-usuall message class is one of:
+usually message class is one of:
 IPM.Contact (convert to .vcf)
 IPM.Activity (this is from the journal)
 IPM.Note (this is a mail -> .eml)
@@ -221,18 +281,20 @@ IPM.StickyNote (just a regular note. probably -> rtf)
 
 FIXME: look at data/content_classes information
 =end
-	def kind
+	def type
 		props.message_class[/IPM\.(.*)/, 1].downcase
 	end
 
+	# shortcuts to some things from the headers
+	%w[From To Cc Bcc Subject].each do |key|
+		define_method(key.downcase) { headers[key].join(' ') unless headers[key].empty? }
+	end
+
 	def inspect
-		# the gsubs are just because of the inspecting.
-		str = %w[From To Bcc Cc].map do |kind|
-			next if headers[kind].empty?
-			kind.downcase + '=' + headers[kind].join(' ').inspect.gsub(/\\"/, "'")
+		str = %w[from to cc bcc subject type].map do |key|
+			send(key) and "#{key}=#{send(key).inspect}"
 		end.compact.join(' ')
-		to = headers['To'].join(' ').inspect.gsub(/\\"/, "'")
-		"#<Msg subject=#{props.subject.inspect} #{str} kind=#{kind.inspect}>"
+		"#<Msg #{str}>"
 	end
 
 	# --------
@@ -266,7 +328,8 @@ FIXME: look at data/content_classes information
 		else
 			# check no header case. content type? etc?. not sure if my Mime will accept
 			warn "taking that other path"
-			Mime.new "Content-Type: text/plain\r\n\r\n" + props.body
+			# body can be nil, hence the to_s
+			Mime.new "Content-Type: text/plain\r\n\r\n" + props.body.to_s
 		end
 	end
 
@@ -321,10 +384,34 @@ FIXME: look at data/content_classes information
 
 		# access the underlying raw properties by code. no implicit type conversion
 		# by tag and whatever other higherlevel stuff i end up doing in this class.
-		attr_reader :raw
+		# unused is so that you can use this as a property store, and get the unused children
+		attr_reader :raw, :unused
 
 		def initialize
 			@raw = {}
+			@unused = []
+		end
+
+		def self.load obj
+			prop = Properties.new
+			prop.load obj
+			prop
+		end
+
+		def load obj
+			obj.children.each do |child|
+				if child.file?
+					# treat everything else as a property.
+					begin
+						self << child
+					rescue
+						warn $!
+						@unused << child
+					end
+				else
+					@unused << child
+				end
+			end
 		end
 
 		# just so i can get an easy unique list of missing ones
@@ -345,7 +432,6 @@ FIXME: look at data/content_classes information
 				unless (pad == 0 || pad == 8) and data[0...pad] == "\000" * pad
 					warn "padding was not as expected #{pad} (#{data.length}) -> #{data[0...pad].inspect}"
 				end
-				# not really sure about using regexps to break binary data into byte chunks
 				data[pad..-1].scan(/.{16}/m).each do |data|
 					property, encoding = ('%08x' % data.unpack('L')).scan /.{4}/
 					# doesn't make any sense to me. probably because its a serialization of some internal
@@ -460,20 +546,13 @@ FIXME: look at data/content_classes information
 
 		def initialize obj
 			@obj = obj
-			@properties = Properties.new
-
-			@obj.children.each do |child|
-				if child.file?
-					begin   @properties << child
-					rescue; warn $!
-					end
-				else
+			@properties = Properties.load @obj
+			@properties.unused.each do |child|
 					# FIXME warn
 # FIXME: this is out of scope so doesn't warn anymore
 #				else ignore child
 #				if property == '3701' # data property means nested msg
 #					puts "* ignoring nested msg."
-				end
 			end
 		end
 
@@ -508,7 +587,9 @@ FIXME: look at data/content_classes information
 			mime = Mime.new "Content-Type: #{mimetype}\r\n\r\n"
 			mime.headers['Content-Disposition'] = [%{attachment; filename="#{filename}"}]
 			mime.headers['Content-Transfer-Encoding'] = ['base64']
-			mime.body.replace Base64.encode64(data).gsub(/\n/, "\r\n")
+			# data.to_s for now. data was nil for some reason.
+			# perhaps it was a data object not correctly handled?
+			mime.body.replace Base64.encode64(data.to_s).gsub(/\n/, "\r\n")
 			mime
 		end
 
@@ -532,41 +613,39 @@ FIXME: look at data/content_classes information
 
 		def initialize obj
 			@obj = obj
-			@properties = Properties.new
-
-			@obj.children.each do |child|
-				if child.file?
-					# treat everything else as a property.
-					begin   @properties << child
-					rescue; warn $!
-					end
-				else
-					# FIXME warn
-				end
+			@properties = Properties.load @obj
+			@properties.unused.each do |child|
+				# FIXME warn
 			end
 		end
 
 		# some kind of best effort guess for converting to standard mime style format.
 		# there are some rules for encoding non 7bit stuff in mail headers. should obey
 		# that here, as these strings could be unicode
-		# email_address will be and EX:/ exchange address, unless external recipient. the
+		# email_address will be an EX:/ address (X.400?), unless external recipient. the
 		# other two we try first.
 		# consider using entry id for this too.
 		def name
 			name = props.transmittable_display_name || props.display_name
-			name[/^'(.*)'/, 1] or name
+			# dequote
+			name[/^'(.*)'/, 1] or name rescue nil
 		end
 
 		def email
 			props.smtp_address || props.org_email_addr || props.email_address
 		end
 
-		def kind
-			{ 0 => :orig, 1 => :to, 2 => :cc, 3 => :bcc }[props.recipient_type]
+		RECIPIENT_TYPES = { 0 => :orig, 1 => :to, 2 => :cc, 3 => :bcc }
+		def type
+			RECIPIENT_TYPES[props.recipient_type]
 		end
 
 		def to_s
-			name && !name.empty? && email ? %{"#{name}" <#{email}>} : (email || name)
+			if name = self.name and !name.empty? and email && name != email
+				%{"#{name}" <#{email}>}
+			else
+				email || name
+			end
 		end
 
 		def inspect
@@ -579,7 +658,6 @@ end
 if $0 == __FILE__
 	msg = Msg.load open(ARGV[0])
 	puts msg.to_mime.to_s
-	#p msg
 end
 
 =begin
@@ -609,13 +687,23 @@ def parse_nameid obj
 			# i think PS_PUBLIC_STRINGS, and PS_MAPI are builtin.
 			guids = child.data.scan(/.{16}/m).map { |str| parse_guid str }
 			pp [:guids, child.name, guids]
+		# the 0003 version:
+		# made of an array of 4 chunks of 2 bytes.
+		# if the 3rd chunk is "0600", or, i think, just doesn't have the "0100" bit set,
+		# then it is a numbered property, not a named one.
+		# the number will be the first chunk. then 2nd seems to be zero
+		# if however that bit is set, then the first chunk is a byte offset into the names
+		# data that follows (the 0004 section). maybe its really the first 2 chunks.
+		# the last chunk seems to count sequentially, and maps to the way properties are stored
+		# as 0x8000 + some offset. should flip a few bits in the real msg, to get a better understanding
+		# of how this works.
 		when /_0004/
 			# this is the string ids for named properties
 			names = []
 			data, i = child.data, 0
 			while i < data.length
 				len = *data[i, 4].unpack('L')
-				names << Ole::UTF16_TO_UTF8[data[i += 4, len]]
+				names << Ole::Storage::UTF16_TO_UTF8[data[i += 4, len]]
 				# skip text, with padding to multiple of 4
 				i += (len + 3) & ~3
 			end
@@ -627,18 +715,3 @@ def parse_nameid obj
 	nil
 end
 
-=begin
-basically, i will just pass them through the same code path. because they are typed tags,
-i will probably make the raw versions converted to appropriate integer values.
-then the higher level versions will map enums to symbols. eg
-
-r.props.recipient_type == :to
-then,
-r2 = recipients.group_by { |r| r.props.recipient_type }
-
-r2[:to]
-r2[:from]
-r2[:bcc]
-... etc
-
-=end

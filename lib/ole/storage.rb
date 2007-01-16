@@ -139,8 +139,10 @@ module Ole
 					 byte_order != "\xfe\xff"
 					raise "not valid OLE2 structured storage file"
 				end
-				if transacting_signature != "\x00" * 4 or
-				   threshold != 4096 or
+				# relaxed this, due to test-msg/qwerty_[1-3]*.msg they all had
+				# 3 for this value. 
+				# transacting_signature != "\x00" * 4 or
+				if threshold != 4096 or
 					 reserved != "\x00" * 6
 					warn "may not be a valid OLE2 structured storage file"
 				end
