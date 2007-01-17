@@ -17,6 +17,19 @@ Highest priority
 * named properties, and further property completeness. initial work done
   there, on parsing the nameid section. and the small properties section.
   involves some guid stuff
+  (initial work done).
+  Now, given a greater understanding of the workings, need to restructure
+  Msg::Properties, to be able to handle accessing named properties, and other
+  sorts of access. Bit more investigation into the property namespaces, the
+  guids etc required, but should be easy to implement.
+  http://msdn2.microsoft.com/en-us/library/ms526761.aspx
+PS_MAPI
+PS_PUBLIC_STRINGS
+PS_ROUTING_EMAIL_ADDRESSES
+PS_ROUTING_ADDRTYPE
+PS_ROUTING_SEARCH_KEY
+PS_ROUTING_DISPLAY_NAME
+PS_ROUTING_ENTRYID
 * get some clean test msgs from somewhere
 * tackle other types of msgs, such as appointments, contacts etc, converting
   to their appropriate standard types too.
