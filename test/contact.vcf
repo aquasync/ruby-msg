@@ -1,0 +1,9 @@
+BEGIN:VCARD
+VERSION:2.1
+N:contact;(full name) A;completely bogus
+FN:(full name) A completely bogus contact
+TITLE:(job title) Manager, bogus division
+TEL;CELL;VOICE:(mobile) 0404 123 456
+EMAIL;PREF;INTERNET:email@emailland.com
+REV:20070117T070503Z
+END:VCARD
