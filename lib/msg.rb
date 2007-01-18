@@ -130,6 +130,11 @@ class Mime
 	end
 end
 
+# turn binary guid into something displayable
+def parse_guid s
+	"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % s.unpack('L S S CC C6')
+end
+
 #
 # Msg class
 # ===============================================================================
@@ -367,8 +372,6 @@ FIXME: look at data/content_classes information
 	# after looking at other MAPI property stores, such as tnef / pst, i might want to separate
 	# the parsing from other stuff here, but for now its ok.
 	class Properties
-		include Enumerable
-
 		IDENTITY_PROC = proc { |a| a }
 		ENCODINGS = {
 			'000d' => 'Directory', # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually
@@ -377,12 +380,23 @@ FIXME: look at data/content_classes information
 			'0102' => IDENTITY_PROC, # binary?
 		}
 
-		# seems a bit ugly
 		MAPITAGS = open('data/mapitags.yaml') { |file| YAML.load file }
-		MAPITAGS_BY_NAME = MAPITAGS.to_a.inject({}) do |hash, pair|
-			hash[pair[1][0][/^PR_(.*)/, 1].downcase] = pair[0]
-			hash
-		end
+
+		# these won't be strings for much longer.
+		PS_MAPI =             '{not-really-sure-what-this-should-say}'
+		PS_PUBLIC_STRINGS =   '{00020329-0000-0000-c000-000000000046}'
+		# string properties in this namespace automatically get added to the internet headers
+		PS_INTERNET_HEADERS = '{00020386-0000-0000-c000-000000000046}'
+		# const GUID PS_PUBLIC_STRINGS    = {0x00020329, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+		# const GUID PS_INTERNET_HEADERS  = {0x00020386, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+		# theres are bunch of outlook onoes i think
+		# const GUID PSETID_Appointment   = {0x00062002, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+		# const GUID PSETID_Task          = {0x00062003, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+		# const GUID PSETID_Address       = {0x00062004, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+		# const GUID PSETID_Common        = {0x00062008, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+		# const GUID PSETID_Log           = {0x0006200A, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+		# Enumerable removed. not really needed
+		# http://blogs.msdn.com/stephen_griffin/archive/2006/05/10/outlook-2007-beta-documentation-notification-based-indexing-support.aspx
 
 		# access the underlying raw properties by code. no implicit type conversion
 		# by tag and whatever other higherlevel stuff i end up doing in this class.
@@ -405,26 +419,29 @@ FIXME: look at data/content_classes information
 			children = obj.children.dup
 			@nameid = if nameid_obj = children.find { |child| child.name == '__nameid_version1.0' }
 				children.delete nameid_obj
-				parse_nameid nameid_obj
+				Properties.parse_nameid nameid_obj
 			end
+			# now parse the actual properties
 			children.each do |child|
 				if child.file?
-					# treat everything else as a property.
 					begin
-						self << child
+						case child.name
+						when /__properties_version1\.0/
+							parse_properties child
+						when /__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?/
+							parse_substg *($~[1..-1] + [child])
+						else raise "bad name for mapi property #{child.name.inspect}"
+						end
 					rescue
 						warn $!
 						@unused << child
 					end
-				else
-					@unused << child
+				else @unused << child
 				end
 			end
 		end
 
-		# move this to the property class...
-		PS_PUBLIC_STRINGS = '{00020329-0000-0000-c000-000000000046}'
-		def parse_nameid obj
+		def self.parse_nameid obj
 			guids_obj = obj.children.find { |child| child.name == '__substg1.0_00020102' }
 			props_obj = obj.children.find { |child| child.name == '__substg1.0_00030102' }
 			names_obj = obj.children.find { |child| child.name == '__substg1.0_00040102' }
@@ -464,133 +481,156 @@ FIXME: look at data/content_classes information
 				else
 					a, b = str.unpack('S2')
 					warn "b not 0" if b != 0
-					'%04x' % a
+					a
 				end
 				# a bit sus
 				guid_off = flags >> 1
 				# missing a few builtin PS_*
 				warn "guid off < 2 (#{guid_off})" if guid_off < 2
 				guid = guids[guid_off - 2]
-				[pseudo_prop, guid, named, prop]
+				[pseudo_prop.hex, Key.new(prop, guid)]
 			end
 
 			warn "* ignoring #{remaining.length} objects in nameid" unless remaining.empty?
 			# this leaves a bunch of other unknown chunks of data with completely unknown meaning.
 			# pp [:unknown, child.name, child.data.unpack('H*')[0].scan(/.{16}/m)]
-			props
+			Hash[*props.flatten]
+		end
+
+		def parse_substg property, encoding, offset, obj
+			if (encoding.hex & 0x1000) != 0
+				if !offset
+					# there is typically one with no offset first, whose data is a series of numbers
+					# equal to the lengths of all the sub parts. gives an implied array size i suppose.
+					# maybe you can initialize the array at this time. the sizes are the same as all the
+					# ole object sizes anyway, its to pre-allocate i suppose.
+					#p obj.data.unpack('L*')
+					# ignore this one
+					return
+				else
+					offset = offset.to_s.hex
+					# the encoding of the individual pieces is like this:
+					encoding = '%04x' % (encoding.hex & ~0x1000)
+				end
+			else
+				warn "offset specified for non-multivalue encoding #{obj.name}" if offset
+				offset = nil
+			end
+			# offset is for multivalue encodings.
+			unless encoder = ENCODINGS[encoding.downcase]
+				warn "unknown encoding #{encoding}"
+				encoder = IDENTITY_PROC
+			end
+			add_property property.downcase.hex, encoder[obj.data], offset
+		end
+
+		# i think this is fairly wrong
+		def parse_properties obj
+			data = obj.data
+			# don't really understand this that well...
+			pad = data.length % 16
+			unless (pad == 0 || pad == 8) and data[0...pad] == "\000" * pad
+				warn "padding was not as expected #{pad} (#{data.length}) -> #{data[0...pad].inspect}"
+			end
+			data[pad..-1].scan(/.{16}/m).each do |data|
+				property, encoding = ('%08x' % data.unpack('L')).scan /.{4}/
+				key = property.hex
+				# doesn't make any sense to me. probably because its a serialization of some internal
+				# outlook structure...
+				next if property == '0000'
+				case encoding
+				when '0102', '001e', '001f'
+					# ignore on purpose. not sure what its for
+				when '0003' # long
+					# don't know what all the other data is for
+					add_property key, *data[8, 4].unpack('L')
+				when '000b' # boolean
+					# again, heaps more data than needed. and its not always 0 or 1.
+					# they are in fact quite big numbers. this is wrong.
+#					p [property, data[4..-1].unpack('H*')[0]]
+					add_property key, data[8, 4].unpack('L')[0] != 0
+				when '0040' # systime
+					# seems to work:
+					add_property key, Ole::Storage::OleDir.parse_time(*data[8..-1].unpack('L*'))
+				else
+					warn "ignoring data in __properties section, encoding: #{encoding}"
+				end
+			end
+		end
+
+		def add_property key, value, pos=nil
+			# map keys in the named property range through nameid
+			if Integer === key and key >= 0x8000
+				if real_key = @nameid[key]
+					key = real_key
+				else
+					warn "property in named range not in nameid #{key.inspect}"
+					key = Key.new key
+				end
+			else
+				key = Key.new key
+			end
+			if pos
+				@raw[key] ||= []
+				warn "duplicate property" unless Array === @raw[key]
+				# ^ this is actually a trickier problem. the issue is more that they must all be of
+				# the same type.
+				@raw[key][pos] = value
+			else
+				# take the last.
+				warn "duplicate property #{key.inspect}" if @raw[key]
+				@raw[key] = value
+			end
+		end
+
+		# resolve an arg (could be key, code, string, or symbol), and possible guid to a key
+		def resolve arg, guid=nil
+			if guid;        Key.new arg, guid
+			else
+				case arg
+				when Key;     arg
+				when Integer; Key.new arg
+				else          sym_to_key[arg.to_sym]
+				end
+			end or raise "unable to resolve key from #{[arg, guid].inspect}"
 		end
 
 		# just so i can get an easy unique list of missing ones
 		@@quiet_property = {}
 
-		def << obj
-			# i got one like this: `__substg1.0_800B101F-00000000', so anchor removed from end
-			# as expected, i then got duplicate property warnings. so that must have been what its
-			# for. i should maybe look into user defined properties. maybe things occur multiple
-			# times if user defined. no, that doesn't really explain it. not sure what the meaning
-			# of multiple properties should be.... hmmm. maybe its an ole thing. maybe the first
-			# one was "trash".
-			# hmmm, think i might know what the other stuff is more - multivalue array position
-			case obj.name
-			when /__properties_version1\.0/
-				data = obj.data
-				# don't really understand this that well...
-				pad = data.length % 16
-				unless (pad == 0 || pad == 8) and data[0...pad] == "\000" * pad
-					warn "padding was not as expected #{pad} (#{data.length}) -> #{data[0...pad].inspect}"
-				end
-				data[pad..-1].scan(/.{16}/m).each do |data|
-					property, encoding = ('%08x' % data.unpack('L')).scan /.{4}/
-					# doesn't make any sense to me. probably because its a serialization of some internal
-					# outlook structure...
-					next if property == '0000'
-					case encoding
-					when '0102', '001e', '001f'
-						# ignore on purpose. not sure what its for
-					when '0003' # long
-						# don't know what all the other data is for
-						add_property property, *data[8, 4].unpack('L')
-					when '000b' # boolean
-						# again, heaps more data than needed. and its not always 0 or 1.
-						# they are in fact quite big numbers. this is wrong.
-#						p [property, data[4..-1].unpack('H*')[0]]
-						add_property property, data[8, 4].unpack('L')[0] != 0
-					when '0040' # systime
-						# seems to work:
-						add_property property, Ole::Storage::OleDir.parse_time(*data[8..-1].unpack('L*'))
+		def sym_to_key
+			# create a map for converting symbols to keys. cache it
+			unless @sym_to_key
+				p :doing_this
+				@sym_to_key = {}
+				@raw.each do |key, value|
+					sym = key.to_sym
+					# used to use @@quiet_property to only ignore once
+					warn "couldn't find symbolic name for key" unless Symbol === sym
+					if @sym_to_key[sym]
+						warn "duplicate key"
+						# we give preference to PS_MAPI keys
+						@sym_to_key[sym] = key if key.guid == PS_MAPI
 					else
-						warn "ignoring data in __properties section, encoding: #{encoding}"
+						# just assign
+						@sym_to_key[sym] = key
 					end
 				end
-			when /^__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?/
-				property, encoding, offset = $~[1..-1]
-				if (encoding.hex & 0x1000) != 0
-					if !offset
-						# there is typically one with no offset first, whose data is a series of numbers
-						# equal to the lengths of all the sub parts. gives an implied array size i suppose.
-						# maybe you can initialize the array at this time. the sizes are the same as all the
-						# ole object sizes anyway, its to pre-allocate i suppose.
-						#p obj.data.unpack('L*')
-						# ignore this one
-						return self
-					else
-						offset = offset.to_s.hex
-						# the encoding of the individual pieces is like this:
-						encoding = '%04x' % (encoding.hex & ~0x1000)
-					end
-				else
-					warn "offset specified for non-multivalue encoding #{obj.name}" if offset
-					offset = nil
-				end
-				# offset is for multivalue encodings.
-				unless encoder = ENCODINGS[encoding.downcase]
-					warn "unknown encoding #{encoding}"
-					encoder = IDENTITY_PROC
-				end
-				add_property property.downcase, encoder[obj.data], offset
-			else
-				raise "bad name for mapi property #{obj.name.inspect}"
 			end
-			self
+			@sym_to_key
 		end
 
-		def add_property property, data, pos=nil
-			# fix the property
-			if property.hex >= '8000'.hex
-				# in the named range
-				if realprop = (@nameid || []).assoc(property)
-					property = realprop.values_at(1, 3).join
-				else
-					warn "property in named range not in nameid #{property.inspect}"
-				end
-			end
-			unless MAPITAGS[property]
-				# (string) named properties shouldn't need an associated name.
-				warn "no name associated to #{property}" unless @@quiet_property[property]
-				@@quiet_property[property] = true
-			end
-			if pos
-				@raw[property] ||= []
-				warn "duplicate property" unless Array === @raw[property]
-				# ^ this is actually a trickier problem. the issue is more that they must all be of
-				# the same type.
-				@raw[property][pos] = data
-			else
-				# take the last.
-				warn "duplicate property #{property}" if @raw[property]
-				@raw[property] = data
-			end
+		# accessors
+
+		def [] arg, guid=nil
+			@raw[resolve(arg, guid)] rescue nil
 		end
 
-		def [] name
-			raise "unknown tag name #{name.inspect}" unless key = MAPITAGS_BY_NAME[name.to_s]
-			@raw[key]
-		end
-
-		def []= name, value
-			raise "unknown tag name #{name.inspect}" unless key = MAPITAGS_BY_NAME[name.to_s]
-			@raw[key] = value
-		end
+		# need to rewrite the above so that i can leverage the logic for this version. maybe have
+		# a resolve, and a create_sym_to_key_mapping function
+		#def []= arg, guid=nil, value
+		#	@raw[resolve(arg, guid)] = value
+		#end
 
 		def method_missing name, *args
 			if name.to_s !~ /\=$/ and args.empty?
@@ -602,26 +642,14 @@ FIXME: look at data/content_classes information
 			end
 		end
 
-		def keys
-			@raw.keys.map { |key| name = MAPITAGS[key] and name[0][/^PR_(.*)/, 1].downcase }.compact
-		end
-
-		def each
-			keys.each { |key| yield key, self[key] }
-		end
-
-		def values
-			keys.map { |key| self[key] }
-		end
-
 		def to_h
 			hash = {}
-			each { |key, value| hash[key] = value }
+			sym_to_key.each { |sym, key| hash[sym] = self[key] if Symbol === sym }
 			hash
 		end
 
 		def inspect
-			'#<Properties ' + map do |k, v|
+			'#<Properties ' + to_h.map do |k, v|
 				v = v.inspect
 				"#{k}=#{v.length > 32 ? v[0..29] + '..."' : v}"
 			end.join(' ') + '>'
@@ -638,6 +666,74 @@ FIXME: look at data/content_classes information
 				@body_rtf = `./rtfdecompr temp.rtf`
 			ensure
 				File.unlink 'temp.rtf'
+			end
+		end
+
+		# ------
+		# key class for accessing properties
+
+		class Key
+			attr_reader :code, :guid
+			def initialize code, guid=PS_MAPI
+				@code, @guid = code, guid
+			end
+
+			def to_sym
+				# try to make a nice name out of ourselves. is this going to intern
+				# too much stuff?
+				# hmmm, for some stuff, like, eg, the message class specific range, sym-ification
+				# of the key depends on knowing our message class. i don't want to store anything else
+				# here though, so if that kind of thing is needed, it can be passed to this function.
+				# worry about that when some examples arise.
+				case code
+				when Integer
+					if guid == PS_MAPI # and < 0x8000 ?
+						# the hash should be updated now that i've changed the process
+						MAPITAGS['%04x' % code].first[/_(.*)/, 1].downcase.to_sym rescue code
+					else
+						# handle other guids here, like mapping names to outlook properties, based on the
+						# outlook object model.
+						code
+					end
+				when String
+					# return something like
+					code.downcase.to_sym
+				end
+			end
+			
+			def to_s
+				to_sym.to_s
+			end
+
+			# FIXME implement these
+			def transmittable?
+				# etc, can go here too
+			end
+
+			# this stuff is to allow it to be a useful key
+			def hash
+				[code, guid].hash
+			end
+
+			def == other
+				hash == other.hash
+			end
+
+			alias eql? :==
+
+			def inspect
+				if Integer === code
+					hex = '0x%04x' % code
+					if guid == PS_MAPI
+						# just display as plain hex number
+						hex
+					else
+						"#<Key #{guid}/#{hex}>"
+					end
+				else
+					# display full guid and code
+					"#<Key #{guid}/#{code.inspect}>"
+				end
 			end
 		end
 	end
@@ -756,28 +852,8 @@ FIXME: look at data/content_classes information
 	end
 end
 
-
 if $0 == __FILE__
 	msg = Msg.load open(ARGV[0])
 	puts msg.to_mime.to_s
-end
-
-=begin
-
-
-(28 bytes binary data and msg.properties.sender_email_address and "\000")
-entryids are a strange format. for internal or from exchange whatever, they have that
-EX:/O=XXXXXX/...
-otherwise, they may have SMTP in them.
-  such as msg.properties.sent_representing_search_key
-	  == "SMTP:SOMEGUY@XXX.COM\000"
-	but Ole::UTF16_TO_UTF8[msg2.properties.sender_entryid[/.*\000\000(.+)\000/, 1][0..-2]]
-	  == "SomeGuy@XXX.COM"
-	for external people, entry ids have displayname and address.
-=end
-
-# turn binary guid into something displayable
-def parse_guid s
-	"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % s.unpack('L S S CC C6')
 end
 

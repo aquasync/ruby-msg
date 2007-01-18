@@ -30,14 +30,26 @@ PS_ROUTING_ADDRTYPE
 PS_ROUTING_SEARCH_KEY
 PS_ROUTING_DISPLAY_NAME
 PS_ROUTING_ENTRYID
+  (mostly done)
   # the message class-specific range, 0x6800 through 0x7FFF.
+* multivalue encoding may explain some of the unknown data in properties objs
 * get some clean test msgs from somewhere
 * tackle other types of msgs, such as appointments, contacts etc, converting
   to their appropriate standard types too.
 * ole code is suppopsed to be able to return guids for something too. supporting
   all this probably means creating a new file for ole/types.rb, containing all
   the various classes, and binary conversion code.
-  
+
+(28 bytes binary data and msg.properties.sender_email_address and "\000")
+entryids are a strange format. for internal or from exchange whatever, they have that
+EX:/O=XXXXXX/...
+otherwise, they may have SMTP in them.
+  such as msg.properties.sent_representing_search_key
+	  == "SMTP:SOMEGUY@XXX.COM\000"
+	but Ole::UTF16_TO_UTF8[msg2.properties.sender_entryid[/.*\000\000(.+)\000/, 1][0..-2]]
+	  == "SomeGuy@XXX.COM"
+	for external people, entry ids have displayname and address.
+
 longer term, i want to investigate the overlap with PST stuff, like libpst,
 which seems to be another kind of mapi tag property storage, and try to
 understand the relationship with existing TNEF work also.
@@ -159,35 +171,6 @@ unknown property 5ff7
 
 get the property ranges figured out, so i can group
 properties by type (transmitable or not, etc).
-
-
-some other stuff:
-Processing property: 0E0A0102
-Processing property: 0037001E
-Processing property: {00062008-0000-0000-C000-00 00 00 00 00 46}0X8510
-Processing property: {00020329-0000-0000-C000-000000000046}MY_NAMED_PROPERTY
-Processing property: {00062008-0000-0000-C000-000000000046}0X8518
-Processing property: {00062008-0000-0000-C000-000000000046}0X8501
-Processing property: {00062008-0000-0000-C000-0000 0000 0046}0X850E
-Processing property: {00062008-0000-0000-C000-000000000046}0X8503
-Processing property: {00062008-0000-0000-C000-000000000046}0X8506
-Processing property: {00062008-0000-0000-C000-000000000046}MY_NAMED_PROPERTY_NUMBER_2
-Processing property: {00062008-0000-0000-C000-000000000046}0X8552
-Processing property: {00062008-0000-0000-C000-000000000046}0X8554
-Processing property: RTFBODY
-Processing property: HTMLBODY
-
-{9b5093e0-5734-4a7f-b88f-b4d0220b5ada}
-{00020386-0000-0000-C000-000000000046}
-
-the other non-numbered properties are serialized as the other 8 numbers i guess.
-8002 for example.
-
-0x8a59 MY_NAMED_PROPERTY		0x8008
-0x8a5a MY_NAMED_PROPERTY_NUMBER_2	0x8009
-0x8a5b this_was_a				0x800a
-0x8a5c ps_mapi				0x8a5c
-0x8a5d ps_int				0x800b
 
 creating ones in ps_mapi works strangely, as ps_mapi is the top levels ones.
 don't get entries in nameid. as should match the definitions.
