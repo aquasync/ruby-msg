@@ -30,6 +30,7 @@ PS_ROUTING_ADDRTYPE
 PS_ROUTING_SEARCH_KEY
 PS_ROUTING_DISPLAY_NAME
 PS_ROUTING_ENTRYID
+  # the message class-specific range, 0x6800 through 0x7FFF.
 * get some clean test msgs from somewhere
 * tackle other types of msgs, such as appointments, contacts etc, converting
   to their appropriate standard types too.

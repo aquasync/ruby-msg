@@ -364,6 +364,8 @@ FIXME: look at data/content_classes information
 		mime
 	end
 
+	# after looking at other MAPI property stores, such as tnef / pst, i might want to separate
+	# the parsing from other stuff here, but for now its ok.
 	class Properties
 		include Enumerable
 
@@ -385,7 +387,7 @@ FIXME: look at data/content_classes information
 		# access the underlying raw properties by code. no implicit type conversion
 		# by tag and whatever other higherlevel stuff i end up doing in this class.
 		# unused is so that you can use this as a property store, and get the unused children
-		attr_reader :raw, :unused
+		attr_reader :raw, :unused, :nameid
 
 		def initialize
 			@raw = {}
@@ -399,7 +401,13 @@ FIXME: look at data/content_classes information
 		end
 
 		def load obj
-			obj.children.each do |child|
+			# we need to do the nameid first, as it provides the map for later user defined properties
+			children = obj.children.dup
+			@nameid = if nameid_obj = children.find { |child| child.name == '__nameid_version1.0' }
+				children.delete nameid_obj
+				parse_nameid nameid_obj
+			end
+			children.each do |child|
 				if child.file?
 					# treat everything else as a property.
 					begin
@@ -414,6 +422,64 @@ FIXME: look at data/content_classes information
 			end
 		end
 
+		# move this to the property class...
+		PS_PUBLIC_STRINGS = '{00020329-0000-0000-c000-000000000046}'
+		def parse_nameid obj
+			guids_obj = obj.children.find { |child| child.name == '__substg1.0_00020102' }
+			props_obj = obj.children.find { |child| child.name == '__substg1.0_00030102' }
+			names_obj = obj.children.find { |child| child.name == '__substg1.0_00040102' }
+			remaining = obj.children.dup
+			[guids_obj, props_obj, names_obj].each { |obj| remaining.delete obj }
+
+			# parse guids
+			# this is the guids for named properities (other than builtin ones)
+			# i think PS_PUBLIC_STRINGS, and PS_MAPI are builtin.
+			guids = [PS_PUBLIC_STRINGS] + guids_obj.data.scan(/.{16}/m).map { |str| parse_guid str }
+
+			# parse names.
+			# this is the string ids for named properties
+			# this isn't used, as they are referred to by offset, not index.
+			names = []
+			data, i = names_obj.data, 0
+			while i < data.length
+				len = *data[i, 4].unpack('L')
+				names << Ole::Storage::UTF16_TO_UTF8[data[i += 4, len]]
+				# skip text, with padding to multiple of 4
+				i += (len + 3) & ~3
+			end
+
+			# parse actual props.
+			# not sure about any of this stuff really.
+			# should flip a few bits in the real msg, to get a better understanding of how this works.
+			props = props_obj.data.scan(/.{8}/m).map do |str|
+				flags, offset = str[4..-1].unpack 'S2'
+				# the property will be serialised as this pseudo property, mapping it to this named property
+				pseudo_prop = '%04x' % ("8000".hex + offset)
+				named = flags & 1 == 1
+				prop = if named
+					str_off = *str.unpack('L')
+					data = names_obj.data
+					len = *data[str_off, 4].unpack('L')
+					Ole::Storage::UTF16_TO_UTF8[data[str_off + 4, len]]
+				else
+					a, b = str.unpack('S2')
+					warn "b not 0" if b != 0
+					'%04x' % a
+				end
+				# a bit sus
+				guid_off = flags >> 1
+				# missing a few builtin PS_*
+				warn "guid off < 2 (#{guid_off})" if guid_off < 2
+				guid = guids[guid_off - 2]
+				[pseudo_prop, guid, named, prop]
+			end
+
+			warn "* ignoring #{remaining.length} objects in nameid" unless remaining.empty?
+			# this leaves a bunch of other unknown chunks of data with completely unknown meaning.
+			# pp [:unknown, child.name, child.data.unpack('H*')[0].scan(/.{16}/m)]
+			props
+		end
+
 		# just so i can get an easy unique list of missing ones
 		@@quiet_property = {}
 
@@ -423,7 +489,8 @@ FIXME: look at data/content_classes information
 			# for. i should maybe look into user defined properties. maybe things occur multiple
 			# times if user defined. no, that doesn't really explain it. not sure what the meaning
 			# of multiple properties should be.... hmmm. maybe its an ole thing. maybe the first
-			# one was "trash"
+			# one was "trash".
+			# hmmm, think i might know what the other stuff is more - multivalue array position
 			case obj.name
 			when /__properties_version1\.0/
 				data = obj.data
@@ -445,7 +512,7 @@ FIXME: look at data/content_classes information
 						add_property property, *data[8, 4].unpack('L')
 					when '000b' # boolean
 						# again, heaps more data than needed. and its not always 0 or 1.
-						# they are in fact quite big numbers.
+						# they are in fact quite big numbers. this is wrong.
 #						p [property, data[4..-1].unpack('H*')[0]]
 						add_property property, data[8, 4].unpack('L')[0] != 0
 					when '0040' # systime
@@ -455,29 +522,64 @@ FIXME: look at data/content_classes information
 						warn "ignoring data in __properties section, encoding: #{encoding}"
 					end
 				end
-			when /^__substg1\.0_(....)(....)/
-				property, encoding = $~[1..-1]
+			when /^__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?/
+				property, encoding, offset = $~[1..-1]
+				if (encoding.hex & 0x1000) != 0
+					if !offset
+						# there is typically one with no offset first, whose data is a series of numbers
+						# equal to the lengths of all the sub parts. gives an implied array size i suppose.
+						# maybe you can initialize the array at this time. the sizes are the same as all the
+						# ole object sizes anyway, its to pre-allocate i suppose.
+						#p obj.data.unpack('L*')
+						# ignore this one
+						return self
+					else
+						offset = offset.to_s.hex
+						# the encoding of the individual pieces is like this:
+						encoding = '%04x' % (encoding.hex & ~0x1000)
+					end
+				else
+					warn "offset specified for non-multivalue encoding #{obj.name}" if offset
+					offset = nil
+				end
+				# offset is for multivalue encodings.
 				unless encoder = ENCODINGS[encoding.downcase]
 					warn "unknown encoding #{encoding}"
 					encoder = IDENTITY_PROC
 				end
-				add_property property.downcase, encoder[obj.data]
+				add_property property.downcase, encoder[obj.data], offset
 			else
 				raise "bad name for mapi property #{obj.name.inspect}"
 			end
 			self
 		end
 
-		def add_property property, data
-			if @raw[property]
-				warn "duplicate property #{property}"
-				# take the last.
+		def add_property property, data, pos=nil
+			# fix the property
+			if property.hex >= '8000'.hex
+				# in the named range
+				if realprop = (@nameid || []).assoc(property)
+					property = realprop.values_at(1, 3).join
+				else
+					warn "property in named range not in nameid #{property.inspect}"
+				end
 			end
 			unless MAPITAGS[property]
-				warn "unknown property #{property}" unless @@quiet_property[property]
+				# (string) named properties shouldn't need an associated name.
+				warn "no name associated to #{property}" unless @@quiet_property[property]
 				@@quiet_property[property] = true
 			end
-			@raw[property] = data
+			if pos
+				@raw[property] ||= []
+				warn "duplicate property" unless Array === @raw[property]
+				# ^ this is actually a trickier problem. the issue is more that they must all be of
+				# the same type.
+				@raw[property][pos] = data
+			else
+				# take the last.
+				warn "duplicate property #{property}" if @raw[property]
+				@raw[property] = data
+			end
 		end
 
 		def [] name
@@ -677,62 +779,5 @@ otherwise, they may have SMTP in them.
 # turn binary guid into something displayable
 def parse_guid s
 	"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % s.unpack('L S S CC C6')
-end
-
-# move this to the property class...
-PS_PUBLIC_STRINGS = '{00020329-0000-0000-c000-000000000046}'
-def parse_nameid obj
-	guids_obj = obj.children.find { |child| child.name == '__substg1.0_00020102' }
-	props_obj = obj.children.find { |child| child.name == '__substg1.0_00030102' }
-	names_obj = obj.children.find { |child| child.name == '__substg1.0_00040102' }
-	remaining = obj.children.dup
-	[guids_obj, props_obj, names_obj].each { |obj| remaining.delete obj }
-
-	# parse guids
-	# this is the guids for named properities (other than builtin ones)
-	# i think PS_PUBLIC_STRINGS, and PS_MAPI are builtin.
-	guids = [PS_PUBLIC_STRINGS] + guids_obj.data.scan(/.{16}/m).map { |str| parse_guid str }
-
-	# parse names.
-	# this is the string ids for named properties
-	# this isn't used, as they are referred to by offset, not index.
-	names = []
-	data, i = names_obj.data, 0
-	while i < data.length
-		len = *data[i, 4].unpack('L')
-		names << Ole::Storage::UTF16_TO_UTF8[data[i += 4, len]]
-		# skip text, with padding to multiple of 4
-		i += (len + 3) & ~3
-	end
-
-	# parse actual props.
-	# not sure about any of this stuff really.
-	# should flip a few bits in the real msg, to get a better understanding of how this works.
-	props = props_obj.data.scan(/.{8}/m) do |str|
-		flags, offset = str[4..-1].unpack 'S2'
-		# the property will be serialised as this pseudo property, mapping it to this named property
-		pseudo_prop = '%04x' % ("8000".hex + offset)
-		named = flags & 1 == 1
-		prop = if named
-			str_off = *str.unpack('L')
-			data = names_obj.data
-			len = *data[str_off, 4].unpack('L')
-			Ole::Storage::UTF16_TO_UTF8[data[str_off + 4, len]]
-		else
-			a, b = str.unpack('S2')
-			warn "b not 0" if b != 0
-			'%04x' % a
-		end
-		# a bit sus
-		guid_off = flags >> 1
-		# missing a few builtin PS_*
-		warn "guid off < 2 (#{guid_off})" if guid_off < 2
-		guid = guids[guid_off - 2]
-		p [pseudo_prop, guid, named, prop]
-	end
-
-	# this leaves a bunch of other unknown chunks of data with completely unknown meaning.
-	# pp [:unknown, child.name, child.data.unpack('H*')[0].scan(/.{16}/m)]
-	nil
 end
 
