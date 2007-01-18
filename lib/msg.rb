@@ -270,7 +270,7 @@ FIXME: look at data/src/content_classes information
 		ENCODINGS = {
 			'000d' => 'Directory', # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually
 			'001f' => Ole::Storage::UTF16_TO_UTF8, # unicode?
-			'001e' => IDENTITY_PROC, # ascii?
+			'001e' => proc { |a| a[0..-2] }, # ascii?
 			'0102' => IDENTITY_PROC, # binary?
 		}
 
