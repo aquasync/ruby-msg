@@ -4,135 +4,19 @@ $: << './lib'
 
 require 'yaml'
 require 'base64'
+require 'logger'
+
 require 'ole/storage'
+require 'mime'
 require 'support'
 
-#
-# Mime class
-# -------------------------------------------------------------------------------
-# basic mime class for really basic and probably non-standard parsing and
-# construction of MIME messages. intended for assistance in parsing the
-# transport_message_headers provided in .msg files, and as the container that
-# can serialize itself for final conversion to standard format.
-#
-
-# some of this stuff seems to duplicate a bit of the work in net/http.rb's HTTPHeader, but I
-# don't know if the overlap is sufficient. I don't want to lower case things, just for starters,
-# meaning i can use this as read/write mime representation for constructing output, and not
-# get screwed up case.
-
-class Mime
-	attr_reader :headers, :body, :parts, :content_type, :preamble, :epilogue
-
-	def initialize str
-		headers, @body = $~[1..-1] if str[/(.*?\r?\n)(?:\r?\n(.*))?\Z/m]
-
-		@headers = Hash.new { |hash, key| hash[key] = [] }
-		@body ||= ''
-		headers.to_s.scan(/^\S+:\s*.*(?:\n\t.*)*/).each do |header|
-			@headers[header[/(\S+):/, 1]] << header[/\S+:\s*(.*)/m, 1].gsub(/\s+/m, ' ').strip # this is kind of wrong
-		end
-
-		# don't have to have content type i suppose
-		@content_type, attrs = nil, {}
-		if content_type = @headers['Content-Type'][0]
-			@content_type, attrs = Mime.split_header content_type
-		end
-
-		if multipart?
-			if body.empty?
-				@preamble = ''
-				@epilogue = ''
-				@parts = []
-			else
-				# we need to split the message at the boundary
-				boundary = attrs['boundary'] or raise "no boundary for multipart message"
-
-				# splitting the body:
-				parts = body.split /--#{Regexp.quote boundary}/m
-				unless parts[-1] =~ /^--/; warn "bad multipart boundary (missing trailing --)"
-				else parts[-1][0..1] = ''
-				end
-				parts.each_with_index do |part, i|
-					part =~ /^(\r?\n)?(.*?)(\r?\n)?\Z/m
-					part.replace $2
-					warn "bad multipart boundary" if (1...parts.length-1) === i and !($1 && $3)
-				end
-				@preamble = parts.shift
-				@epilogue = parts.pop
-				@parts = parts.map { |part| Mime.new part }
-			end
-		end
-	end
-
-	def multipart?
-		@content_type and @content_type[/^multipart/]
-	end
-
-	def inspect
-		# add some extra here.
-		"#<Mime content_type=#{@content_type.inspect}>"
-	end
-
-	def to_tree
-		if multipart?
-			str = "- #{inspect}\n"
-			parts.each_with_index do |part, i|
-				last = i == parts.length - 1
-				part.to_tree.split(/\n/).each_with_index do |line, j|
-					str << "  #{last ? (j == 0 ? "\\" : ' ') : '|'}" + line + "\n"
-				end
-			end
-			str
-		else
-			"- #{inspect}\n"
-		end
-	end
-
-	def to_s opts={}
-		opts = {:boundary_counter => 0}.merge opts
-		if multipart?
-			boundary = Mime.make_boundary opts[:boundary_counter] += 1, self
-			@body = [preamble, parts.map { |part| "\r\n" + part.to_s(opts) + "\r\n" }, "--\r\n" + epilogue].
-				flatten.join("\r\n--" + boundary)
-			content_type, attrs = Mime.split_header @headers['Content-Type'][0]
-			attrs['boundary'] = boundary
-			@headers['Content-Type'] = [([content_type] + attrs.map { |key, val| %{#{key}="#{val}"} }).join('; ')]
-		end
-
-		str = ''
-		@headers.each do |key, vals|
-			vals.each { |val| str << "#{key}: #{val}\r\n" }
-		end
-		str << "\r\n" + @body
-	end
-
-	def self.split_header header
-		# FIXME: haven't read standard. not sure what its supposed to do with " in the name, or if other
-		# escapes are allowed. can't test on windows as " isn't allowed anyway. can be fixed with more
-		# accurate parser later.
-		# maybe move to some sort of Header class. but not all headers should be of it i suppose.
-		# at least add a join_header then, taking name and {}. for use in Mime#to_s (for boundary
-		# rewrite), and Attachment#to_mime, among others...
-		attrs = {}
-		header.scan(/;\s*([^\s=]+)\s*=\s*("[^"]*"|[^\s;]*)\s*/m).each do |key, value|
-			if attrs[key]; warn "ignoring duplicate header attribute #{key.inspect}"
-			else attrs[key] = value[/^"/] ? value[1..-2] : value
-			end
-		end
-
-		[header[/^[^;]+/].strip, attrs]
-	end
-
-	# +i+ is some value that should be unique for all multipart boundaries for a given message
-	def self.make_boundary i, extra_obj = Mime
-		"----_=_NextPart_#{'%03d' % i}_#{'%08x' % extra_obj.object_id}.#{'%08x' % Time.now}"
-	end
-end
-
 # turn binary guid into something displayable
-def parse_guid s
-	"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % s.unpack('L S S CC C6')
+module Ole
+	class Storage
+		def self.parse_guid s
+			"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % s.unpack('L S S CC C6')
+		end
+	end
 end
 
 #
@@ -142,6 +26,16 @@ end
 #
 
 class Msg
+	Log = Logger.new STDERR
+	# void logger
+	# there should be something like Logger::VOID, as this wouldn't be uncommon.
+	# or maybe you should just use STDERR, and set a level so that nothing prints anyway
+	#.instance_eval do
+	#	%w[warn debug info].each do |sym|
+	#		define_method(sym) {}
+	#	end
+	#end
+
 	attr_reader :ole, :attachments, :recipients, :headers, :properties
 	alias props :properties
 
@@ -154,7 +48,7 @@ class Msg
 		@ole = ole
 		@root = @ole.root
 
-		warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
+		Log.warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
 
 		@attachments = []
 		@recipients = []
@@ -231,14 +125,14 @@ class Msg
 			# what about marking whether we thing the email was sent or not? or draft?
 			# for partition into an eventual Inbox, Sent, Draft mbox set?
 			if name or email
-				warn "* no smtp sender email address available (only X.400). creating fake one"
+				Log.warn "* no smtp sender email address available (only X.400). creating fake one"
 				# this is crap. though i've specially picked the logic so that it generates the correct
 				# email addresses in my case.
 				user = name.sub /(.*), (.*)/, "\\2.\\1"
 				domain = email[%r{^/O=([^/]+)}i, 1].downcase + '.com'
 				headers['From'] = [%{"#{name}" <#{user}@#{domain}>}]
 			else
-				warn "* no sender email address available at all. FIXME"
+				Log.warn "* no sender email address available at all. FIXME"
 			end
 		# else we leave the transport message header version
 		end
@@ -273,7 +167,7 @@ class Msg
 	end
 
 	def ignore obj
-		warn "* ignoring #{obj.name} (#{obj.type.to_s})"
+		Log.warn "* ignoring #{obj.name} (#{obj.type.to_s})"
 	end
 
 =begin
@@ -284,7 +178,7 @@ IPM.Note (this is a mail -> .eml)
 IPM.Appointment (from the calendar)
 IPM.StickyNote (just a regular note. probably -> rtf)
 
-FIXME: look at data/content_classes information
+FIXME: look at data/src/content_classes information
 =end
 	def type
 		props.message_class[/IPM\.(.*)/, 1].downcase
@@ -332,7 +226,7 @@ FIXME: look at data/content_classes information
 			mime
 		else
 			# check no header case. content type? etc?. not sure if my Mime will accept
-			warn "taking that other path"
+			Log.debug "taking that other path"
 			# body can be nil, hence the to_s
 			Mime.new "Content-Type: text/plain\r\n\r\n" + props.body.to_s
 		end
@@ -383,6 +277,7 @@ FIXME: look at data/content_classes information
 		MAPITAGS = open('data/mapitags.yaml') { |file| YAML.load file }
 
 		# these won't be strings for much longer.
+		# FIXME
 		PS_MAPI =             '{not-really-sure-what-this-should-say}'
 		PS_PUBLIC_STRINGS =   '{00020329-0000-0000-c000-000000000046}'
 		# string properties in this namespace automatically get added to the internet headers
@@ -395,8 +290,8 @@ FIXME: look at data/content_classes information
 		# const GUID PSETID_Address       = {0x00062004, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
 		# const GUID PSETID_Common        = {0x00062008, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
 		# const GUID PSETID_Log           = {0x0006200A, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
-		# Enumerable removed. not really needed
 		# http://blogs.msdn.com/stephen_griffin/archive/2006/05/10/outlook-2007-beta-documentation-notification-based-indexing-support.aspx
+		# Enumerable removed. not really needed
 
 		# access the underlying raw properties by code. no implicit type conversion
 		# by tag and whatever other higherlevel stuff i end up doing in this class.
@@ -433,7 +328,7 @@ FIXME: look at data/content_classes information
 						else raise "bad name for mapi property #{child.name.inspect}"
 						end
 					rescue
-						warn $!
+						Log.warn $!
 						@unused << child
 					end
 				else @unused << child
@@ -451,11 +346,14 @@ FIXME: look at data/content_classes information
 			# parse guids
 			# this is the guids for named properities (other than builtin ones)
 			# i think PS_PUBLIC_STRINGS, and PS_MAPI are builtin.
-			guids = [PS_PUBLIC_STRINGS] + guids_obj.data.scan(/.{16}/m).map { |str| parse_guid str }
+			guids = [PS_PUBLIC_STRINGS] + guids_obj.data.scan(/.{16}/m).map do |str|
+				Ole::Storage.parse_guid str
+			end
 
 			# parse names.
 			# this is the string ids for named properties
 			# this isn't used, as they are referred to by offset, not index.
+=begin
 			names = []
 			data, i = names_obj.data, 0
 			while i < data.length
@@ -464,6 +362,7 @@ FIXME: look at data/content_classes information
 				# skip text, with padding to multiple of 4
 				i += (len + 3) & ~3
 			end
+=end
 
 			# parse actual props.
 			# not sure about any of this stuff really.
@@ -480,18 +379,18 @@ FIXME: look at data/content_classes information
 					Ole::Storage::UTF16_TO_UTF8[data[str_off + 4, len]]
 				else
 					a, b = str.unpack('S2')
-					warn "b not 0" if b != 0
+					Log.debug "b not 0" if b != 0
 					a
 				end
 				# a bit sus
 				guid_off = flags >> 1
 				# missing a few builtin PS_*
-				warn "guid off < 2 (#{guid_off})" if guid_off < 2
+				Log.debug "guid off < 2 (#{guid_off})" if guid_off < 2
 				guid = guids[guid_off - 2]
 				[pseudo_prop.hex, Key.new(prop, guid)]
 			end
 
-			warn "* ignoring #{remaining.length} objects in nameid" unless remaining.empty?
+			Log.warn "* ignoring #{remaining.length} objects in nameid" unless remaining.empty?
 			# this leaves a bunch of other unknown chunks of data with completely unknown meaning.
 			# pp [:unknown, child.name, child.data.unpack('H*')[0].scan(/.{16}/m)]
 			Hash[*props.flatten]
@@ -513,12 +412,12 @@ FIXME: look at data/content_classes information
 					encoding = '%04x' % (encoding.hex & ~0x1000)
 				end
 			else
-				warn "offset specified for non-multivalue encoding #{obj.name}" if offset
+				Log.warn "offset specified for non-multivalue encoding #{obj.name}" if offset
 				offset = nil
 			end
 			# offset is for multivalue encodings.
 			unless encoder = ENCODINGS[encoding.downcase]
-				warn "unknown encoding #{encoding}"
+				Log.warn "unknown encoding #{encoding}"
 				encoder = IDENTITY_PROC
 			end
 			add_property property.downcase.hex, encoder[obj.data], offset
@@ -530,7 +429,7 @@ FIXME: look at data/content_classes information
 			# don't really understand this that well...
 			pad = data.length % 16
 			unless (pad == 0 || pad == 8) and data[0...pad] == "\000" * pad
-				warn "padding was not as expected #{pad} (#{data.length}) -> #{data[0...pad].inspect}"
+				Log.warn "padding was not as expected #{pad} (#{data.length}) -> #{data[0...pad].inspect}"
 			end
 			data[pad..-1].scan(/.{16}/m).each do |data|
 				property, encoding = ('%08x' % data.unpack('L')).scan /.{4}/
@@ -553,7 +452,7 @@ FIXME: look at data/content_classes information
 					# seems to work:
 					add_property key, Ole::Storage::OleDir.parse_time(*data[8..-1].unpack('L*'))
 				else
-					warn "ignoring data in __properties section, encoding: #{encoding}"
+					Log.warn "ignoring data in __properties section, encoding: #{encoding}"
 				end
 			end
 		end
@@ -564,7 +463,7 @@ FIXME: look at data/content_classes information
 				if real_key = @nameid[key]
 					key = real_key
 				else
-					warn "property in named range not in nameid #{key.inspect}"
+					Log.warn "property in named range not in nameid #{key.inspect}"
 					key = Key.new key
 				end
 			else
@@ -572,13 +471,13 @@ FIXME: look at data/content_classes information
 			end
 			if pos
 				@raw[key] ||= []
-				warn "duplicate property" unless Array === @raw[key]
+				Log.warn "duplicate property" unless Array === @raw[key]
 				# ^ this is actually a trickier problem. the issue is more that they must all be of
 				# the same type.
 				@raw[key][pos] = value
 			else
 				# take the last.
-				warn "duplicate property #{key.inspect}" if @raw[key]
+				Log.warn "duplicate property #{key.inspect}" if @raw[key]
 				@raw[key] = value
 			end
 		end
@@ -601,14 +500,13 @@ FIXME: look at data/content_classes information
 		def sym_to_key
 			# create a map for converting symbols to keys. cache it
 			unless @sym_to_key
-				p :doing_this
 				@sym_to_key = {}
 				@raw.each do |key, value|
 					sym = key.to_sym
 					# used to use @@quiet_property to only ignore once
-					warn "couldn't find symbolic name for key" unless Symbol === sym
+					Log.info "couldn't find symbolic name for key #{key.inspect}" unless Symbol === sym
 					if @sym_to_key[sym]
-						warn "duplicate key"
+						Log.warn "duplicate key #{key.inspect}"
 						# we give preference to PS_MAPI keys
 						@sym_to_key[sym] = key if key.guid == PS_MAPI
 					else
@@ -853,6 +751,8 @@ FIXME: look at data/content_classes information
 end
 
 if $0 == __FILE__
+	# just shut up and convert a message to eml
+	Msg::Log.level = Logger::FATAL
 	msg = Msg.load open(ARGV[0])
 	puts msg.to_mime.to_s
 end
