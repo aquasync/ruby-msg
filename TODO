@@ -4,6 +4,12 @@ Draws on msgconvert.pl, and tries to be a cleaner and more complete approach.
 
 Highest priority
 ------------------------
+* certain parsing still not correct, especially small properties directory, 
+  things like bools, multiavlue shorts etc.
+* still a lot of cleaning up to do. removal of dead debug code, moving stuff
+  into the right classes.
+* unit tests, to lock down the functionality i have so far
+
 * get some sort of working From: header
   there doesn't appear to be a way to get an smtp address for the sender in an
   internal mail. you need to query the exchanger server, using the sender_entryid

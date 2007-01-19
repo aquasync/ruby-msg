@@ -207,7 +207,18 @@ FIXME: look at data/src/content_classes information
 
 	# --------
 	# beginnings of conversion stuff
-	
+
+	def convert
+		# 
+		# for now, multiplex between returning a Mime object,
+		# a Vpim::Vcard object,
+		# a Vpim::Vcalendar object
+		#
+		# all of which should support a common serialization,
+		# to save the result to a file.
+		#
+	end
+
 	def body_to_mime
 		# to create the body
 		# should have some options about serializing rtf. and possibly options to check the rtf
@@ -242,6 +253,9 @@ FIXME: look at data/src/content_classes information
 	end
 
 	def to_mime
+		# intended to be used for IPM.note, which is the email type. can use it for others if desired,
+		# YMMV
+		Log.warn "to_mime used on a #{props.message_class}" unless props.message_class == 'IPM.Note'
 		# we always have a body
 		mime = body = body_to_mime
 
@@ -272,6 +286,9 @@ FIXME: look at data/src/content_classes information
 		mime
 	end
 
+	def to_vcard
+	end
+
 	# after looking at other MAPI property stores, such as tnef / pst, i might want to separate
 	# the parsing from other stuff here, but for now its ok.
 	class Properties
@@ -283,23 +300,28 @@ FIXME: look at data/src/content_classes information
 			0x0102 => IDENTITY_PROC, # binary?
 		}
 
-		MAPITAGS = open('data/mapitags.yaml') { |file| YAML.load file }
-
 		# these won't be strings for much longer.
+		# maybe later, the Key#inspect could automatically show symbolic guid names if they
+		# are part of this builtin list.
 		# FIXME
 		PS_MAPI =             '{not-really-sure-what-this-should-say}'
 		PS_PUBLIC_STRINGS =   '{00020329-0000-0000-c000-000000000046}'
 		# string properties in this namespace automatically get added to the internet headers
 		PS_INTERNET_HEADERS = '{00020386-0000-0000-c000-000000000046}'
-		# const GUID PS_PUBLIC_STRINGS    = {0x00020329, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
-		# const GUID PS_INTERNET_HEADERS  = {0x00020386, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
-		# theres are bunch of outlook onoes i think
-		# const GUID PSETID_Appointment   = {0x00062002, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
-		# const GUID PSETID_Task          = {0x00062003, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
-		# const GUID PSETID_Address       = {0x00062004, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
-		# const GUID PSETID_Common        = {0x00062008, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
-		# const GUID PSETID_Log           = {0x0006200A, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+		# theres are bunch of outlook ones i think
 		# http://blogs.msdn.com/stephen_griffin/archive/2006/05/10/outlook-2007-beta-documentation-notification-based-indexing-support.aspx
+		# IPM.Appointment
+		PSETID_Appointment =  '{00062002-0000-0000-c000-000000000046}'
+		# IPM.Task
+		PSETID_Task =         '{00062003-0000-0000-c000-000000000046}'
+		# used for IPM.Contact
+		PSETID_Address =      '{00062004-0000-0000-c000-000000000046}'
+		PSETID_Common =       '{00062008-0000-0000-c000-000000000046}'
+		# didn't find a source for this name. it is for IPM.StickyNote
+		PSETID_Note =         '{0006200e-0000-0000-c000-000000000046}'
+		# for IPM.Activity. also called the journal?
+		PSETID_Log =          '{0006200a-0000-0000-c000-000000000046}'
+
 		# Enumerable removed. not really needed
 
 		# access the underlying raw properties by code. no implicit type conversion
@@ -462,7 +484,7 @@ FIXME: look at data/src/content_classes information
 					add_property key, Ole::Storage::OleDir.parse_time(*data[8..-1].unpack('L*'))
 				else
 					Log.warn "ignoring data in __properties section, encoding: #{encoding}"
-					Log << data.unpack('H*').inspect
+					Log << data.unpack('H*').inspect + "\n"
 				end
 			end
 		end
@@ -601,10 +623,12 @@ FIXME: look at data/src/content_classes information
 					else
 						# handle other guids here, like mapping names to outlook properties, based on the
 						# outlook object model.
-						code
+						NAMED_MAP[self].to_sym rescue code
 					end
 				when String
 					# return something like
+					# note that named properties don't go through the map at the moment. so #categories
+					# doesn't work yet
 					code.downcase.to_sym
 				end
 			end
@@ -644,6 +668,14 @@ FIXME: look at data/src/content_classes information
 				end
 			end
 		end
+
+		# YUCK moved here because we need Key
+		# data files that provide for the code to symbolic name mapping
+		# guids in named_map are really constant references to the above
+		MAPITAGS = open('data/mapitags.yaml') { |file| YAML.load file }
+		NAMED_MAP = Hash[*open('data/named_map.yaml') { |file| YAML.load file }.map do |key, value|
+			[Key.new(key[0], const_get(key[1])), value]
+		end.flatten]
 	end
 
 	class Attachment
