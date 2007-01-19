@@ -26,7 +26,16 @@ end
 #
 
 class Msg
+	VERSION = '1.2.9'
+
 	Log = Logger.new STDERR
+	Log.formatter = proc do |severity, time, progname, msg|
+		# find where we were called from, in our code
+		callstack = caller.dup
+		callstack.shift while callstack.first =~ /\/logger\.rb:\d+:in/
+		from = callstack.first.sub /:in `(.*?)'/, ":\\1"
+		"[%s %s]\n%-7s%s\n" % [time.strftime('%H:%M:%S'), from, severity, msg.to_s]
+	end
 	# void logger
 	# there should be something like Logger::VOID, as this wouldn't be uncommon.
 	# or maybe you should just use STDERR, and set a level so that nothing prints anyway
@@ -268,10 +277,10 @@ FIXME: look at data/src/content_classes information
 	class Properties
 		IDENTITY_PROC = proc { |a| a }
 		ENCODINGS = {
-			'000d' => 'Directory', # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually
-			'001f' => Ole::Storage::UTF16_TO_UTF8, # unicode?
-			'001e' => proc { |a| a[0..-2] }, # ascii?
-			'0102' => IDENTITY_PROC, # binary?
+			0x000d => 'Directory', # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually
+			0x001f => Ole::Storage::UTF16_TO_UTF8, # unicode?
+			0x001e => proc { |a| a[0..-2] }, # ascii?
+			0x0102 => IDENTITY_PROC, # binary?
 		}
 
 		MAPITAGS = open('data/mapitags.yaml') { |file| YAML.load file }
@@ -324,7 +333,7 @@ FIXME: look at data/src/content_classes information
 						when /__properties_version1\.0/
 							parse_properties child
 						when /__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?/
-							parse_substg *($~[1..-1] + [child])
+							parse_substg *($~[1..-1].map { |num| num.hex rescue nil } + [child])
 						else raise "bad name for mapi property #{child.name.inspect}"
 						end
 					rescue
@@ -370,7 +379,7 @@ FIXME: look at data/src/content_classes information
 			props = props_obj.data.scan(/.{8}/m).map do |str|
 				flags, offset = str[4..-1].unpack 'S2'
 				# the property will be serialised as this pseudo property, mapping it to this named property
-				pseudo_prop = '%04x' % ("8000".hex + offset)
+				pseudo_prop = 0x8000 + offset
 				named = flags & 1 == 1
 				prop = if named
 					str_off = *str.unpack('L')
@@ -387,7 +396,7 @@ FIXME: look at data/src/content_classes information
 				# missing a few builtin PS_*
 				Log.debug "guid off < 2 (#{guid_off})" if guid_off < 2
 				guid = guids[guid_off - 2]
-				[pseudo_prop.hex, Key.new(prop, guid)]
+				[pseudo_prop, Key.new(prop, guid)]
 			end
 
 			Log.warn "* ignoring #{remaining.length} objects in nameid" unless remaining.empty?
@@ -396,8 +405,8 @@ FIXME: look at data/src/content_classes information
 			Hash[*props.flatten]
 		end
 
-		def parse_substg property, encoding, offset, obj
-			if (encoding.hex & 0x1000) != 0
+		def parse_substg key, encoding, offset, obj
+			if (encoding & 0x1000) != 0
 				if !offset
 					# there is typically one with no offset first, whose data is a series of numbers
 					# equal to the lengths of all the sub parts. gives an implied array size i suppose.
@@ -407,20 +416,19 @@ FIXME: look at data/src/content_classes information
 					# ignore this one
 					return
 				else
-					offset = offset.to_s.hex
-					# the encoding of the individual pieces is like this:
-					encoding = '%04x' % (encoding.hex & ~0x1000)
+					# remove multivalue flag for individual pieces
+					encoding &= ~0x1000
 				end
 			else
 				Log.warn "offset specified for non-multivalue encoding #{obj.name}" if offset
 				offset = nil
 			end
 			# offset is for multivalue encodings.
-			unless encoder = ENCODINGS[encoding.downcase]
+			unless encoder = ENCODINGS[encoding]
 				Log.warn "unknown encoding #{encoding}"
 				encoder = IDENTITY_PROC
 			end
-			add_property property.downcase.hex, encoder[obj.data], offset
+			add_property key, encoder[obj.data], offset
 		end
 
 		# i think this is fairly wrong
@@ -438,8 +446,9 @@ FIXME: look at data/src/content_classes information
 				# outlook structure...
 				next if property == '0000'
 				case encoding
-				when '0102', '001e', '001f'
+				when '0102', '001e', '001f', '101e', '101f'
 					# ignore on purpose. not sure what its for
+					# multivalue versions ignored also
 				when '0003' # long
 					# don't know what all the other data is for
 					add_property key, *data[8, 4].unpack('L')
@@ -453,6 +462,7 @@ FIXME: look at data/src/content_classes information
 					add_property key, Ole::Storage::OleDir.parse_time(*data[8..-1].unpack('L*'))
 				else
 					Log.warn "ignoring data in __properties section, encoding: #{encoding}"
+					Log << data.unpack('H*').inspect
 				end
 			end
 		end
@@ -751,8 +761,13 @@ FIXME: look at data/src/content_classes information
 end
 
 if $0 == __FILE__
+	quiet = if ARGV[0] == '-q'
+		ARGV.shift
+		true
+	end
 	# just shut up and convert a message to eml
-	Msg::Log.level = Logger::FATAL
+	Msg::Log.level = Logger::WARN
+	Msg::Log.level = Logger::FATAL if quiet
 	msg = Msg.load open(ARGV[0])
 	puts msg.to_mime.to_s
 end

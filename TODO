@@ -34,8 +34,18 @@ PS_ROUTING_ENTRYID
   # the message class-specific range, 0x6800 through 0x7FFF.
 * multivalue encoding may explain some of the unknown data in properties objs
 * get some clean test msgs from somewhere
+* some quick adjustments to Msg / Mime to allow optional use of OrderedHash
+  for the headers, to allow order to be preserved.
 * tackle other types of msgs, such as appointments, contacts etc, converting
   to their appropriate standard types too.
+  would like to look at this next. see about the content specific range
+  http://en.wikipedia.org/wiki/ICalendar
+  is it better/easier to go through micro formats? there are libraries for ruby
+  already i think. check this out. although using IMC standards seem to make
+  more sense. encoding issues?
+  try contact => vcf,
+  note => ?? icalendar. VTODO? / VJOURNAL?
+  appointment => VEVENT?
 * ole code is suppopsed to be able to return guids for something too. supporting
   all this probably means creating a new file for ole/types.rb, containing all
   the various classes, and binary conversion code.
