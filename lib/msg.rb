@@ -287,6 +287,37 @@ FIXME: look at data/src/content_classes information
 	end
 
 	def to_vcard
+		require 'rubygems'
+		require 'vpim/vcard'
+		# a very incomplete mapping, but its a start...
+		# can't find where to set a lot of stuff, like zipcode, jobtitle etc
+		card = Vpim::Vcard::Maker.make2 do |m|
+			# these are all standard mapi properties
+			m.add_name do |n|
+				n.given = props.given_name.to_s
+				n.family = props.surname.to_s
+				n.fullname = props.subject.to_s
+			end
+
+			# outlook seems to eschew the mapi properties this time,
+			# like postal_address, street_address, home_address_city
+			# so we use the named properties
+			m.add_addr do |a|
+				a.location = 'work'
+				a.street = props.business_address_street.to_s
+				# i think i can just assign the array
+				a.locality = [props.business_address_city, props.business_address_state].compact.join ', '
+				a.country = props.business_address_country.to_s
+				a.postalcode = props.business_address_postal_code.to_s
+			end
+
+			# right type?
+			m.birthday = props.birthday if props.birthday
+			m.nickname = props.nickname.to_s
+
+			# photo available?
+			# FIXME finish, emails, telephones etc
+		end
 	end
 
 	# after looking at other MAPI property stores, such as tnef / pst, i might want to separate
@@ -382,18 +413,10 @@ FIXME: look at data/src/content_classes information
 			end
 
 			# parse names.
-			# this is the string ids for named properties
-			# this isn't used, as they are referred to by offset, not index.
-=begin
-			names = []
-			data, i = names_obj.data, 0
-			while i < data.length
-				len = *data[i, 4].unpack('L')
-				names << Ole::Storage::UTF16_TO_UTF8[data[i += 4, len]]
-				# skip text, with padding to multiple of 4
-				i += (len + 3) & ~3
-			end
-=end
+			# the string ids for named properties
+			# they are no longer parsed, as they're referred to by offset not
+			# index. they are simply sequentially packed, as a long, giving
+			# the string length, then padding to 4 byte multiple, and repeat.
 
 			# parse actual props.
 			# not sure about any of this stuff really.
@@ -706,21 +729,6 @@ FIXME: look at data/src/content_classes information
 
 		def to_mime
 			# TODO: smarter mime typing.
-			# it kind of sucks, having all this stuff in memory. Ole and Mime classes should support
-			# streams. for ole, if data length > 1024, it could automatically just become a
-			# promise, wrapping a stream. most methods wouold just force the load to mem and then
-			# it would delegate to the string. however, #to_io could return underlying io object.
-			# unfortunately base64 builtin doesn't work on streams though, or provide mechanism
-			# that i can see. but one can of course pass chunks of appropriate size to it. ideally,
-			# attachments would just be streamed from the msg file, through appropriate encoding,
-			# and to output file. so mime#to_s will be replaced with a call to something like
-			# mime#serialize, using a StringIO etc. this then allows:
-			# msg = Msg.load 'input.msg'
-			# open('output.eml', 'w') { |file| msg.to_mime.serialize file }
-			# the existence of promises etc will mean input.msg is actually still open though.s o
-			# i'll then need either
-			# msg.close
-			# or block form. a finalizer can also release the file. 
 			mimetype = props.attach_mime_tag || 'application/octet-stream'
 			mime = Mime.new "Content-Type: #{mimetype}\r\n\r\n"
 			mime.headers['Content-Disposition'] = [%{attachment; filename="#{filename}"}]
@@ -739,11 +747,9 @@ FIXME: look at data/src/content_classes information
 	#
 	# Recipient class
 	# ----------------------------------------------------------------------------
-	# serves as a container for the recip directories in the .msg. not sure of the
-	# usefullness. has things like office_location, business_telephone_number, but
-	# not enough for vcard. and doesn't have a normal email address anywhere, just
-	# that exchange crap EX:/O=.../OU=.../CN=...
-	# should look what msgconvert.pl was doing with them.
+	# serves as a container for the recip directories in the .msg.
+	# has things like office_location, business_telephone_number, but i don't
+	# think enough to make a vCard out of??
 	#
 	class Recipient
 		attr_reader :obj, :properties

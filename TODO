@@ -1,14 +1,12 @@
-Generally, the goal of the project is conversion of *.msg files into proper rfc2822
-emails, independent of outlook, or any platform dependencies etc.
-Draws on msgconvert.pl, and tries to be a cleaner and more complete approach.
-
 Highest priority
 ------------------------
 * certain parsing still not correct, especially small properties directory, 
   things like bools, multiavlue shorts etc.
 * still a lot of cleaning up to do. removal of dead debug code, moving stuff
   into the right classes.
-* unit tests, to lock down the functionality i have so far
+* unit tests, to lock down the functionality i have so far. unfortunately
+  boring.
+  fix Rakefile for install, packaging etc.
 
 * get some sort of working From: header
   there doesn't appear to be a way to get an smtp address for the sender in an
@@ -17,27 +15,21 @@ Highest priority
   you may also get these so called "X.400" addresses for external recipients
   that are on the GAL (Global Address List), as custom recipients.
   (mostly complete. better way?)
-* similarly, with new date support, add Date:
-  (mostly complete. time zone worries?)
-* clean up warnings. move to using a logger for warnings.
-* named properties, and further property completeness. initial work done
-  there, on parsing the nameid section. and the small properties section.
-  involves some guid stuff
-  (initial work done).
-  Now, given a greater understanding of the workings, need to restructure
-  Msg::Properties, to be able to handle accessing named properties, and other
-  sorts of access. Bit more investigation into the property namespaces, the
-  guids etc required, but should be easy to implement.
-  http://msdn2.microsoft.com/en-us/library/ms526761.aspx
-PS_MAPI
-PS_PUBLIC_STRINGS
+* check lots of little details: encoding issues with code pages etc other
+  than ascii stuff. consider Msg, Mime, Vcard etc, to check its clean. check
+  timezones, inaccuracies in date handling.
+* http://msdn2.microsoft.com/en-us/library/ms526761.aspx
+  import guids for these?
 PS_ROUTING_EMAIL_ADDRESSES
 PS_ROUTING_ADDRTYPE
 PS_ROUTING_SEARCH_KEY
 PS_ROUTING_DISPLAY_NAME
 PS_ROUTING_ENTRYID
-  (mostly done)
-  # the message class-specific range, 0x6800 through 0x7FFF.
+* check this thing i wrote:
+  creating ones in ps_mapi works strangely, as ps_mapi is the top levels ones.
+  don't get entries in nameid. as should match the definitions.
+  however still get allocated an 8 number. that number becomes permanent...
+* do something about the message class-specific range, 0x6800 through 0x7FFF.
 * multivalue encoding may explain some of the unknown data in properties objs
 * get some clean test msgs from somewhere
 * some quick adjustments to Msg / Mime to allow optional use of OrderedHash
@@ -52,9 +44,19 @@ PS_ROUTING_ENTRYID
   try contact => vcf,
   note => ?? icalendar. VTODO? / VJOURNAL?
   appointment => VEVENT?
+  (initial try done. really basic vcard output supported. not difficult)
 * ole code is suppopsed to be able to return guids for something too. supporting
   all this probably means creating a new file for ole/types.rb, containing all
   the various classes, and binary conversion code.
+* some dubiously useful info about some unknown codes i wrote:
+unknown property 5ff6
+ * appears to be equal to display_name, and transmitable_display_name
+unknown property 5ff7
+ * recipient.properties.raw['5ff7'].upcase == recipient.properties.entryid
+   is equivalent, but not all uppercase.
+	 everything else is upper though. maybe a displayname kind of thing.
+* common relationship
+	CGI.escape(msg.properties.subject.strip).tr('+', ' ') + '.EML' == msg.properties.url_comp_name
 
 (28 bytes binary data and msg.properties.sender_email_address and "\000")
 entryids are a strange format. for internal or from exchange whatever, they have that
@@ -107,7 +109,7 @@ Msg
 		sent_representing_email_address:
 		sender_name:
 - fill out some of the tag holes. mostly done
-- integrate rtf decompression, as pseudo tag. mostly done
+- properly integrate rtf decompression, and the html conversion from rtf
 - preliminary mime conversion. mostly done. currently relies on transport_message_headers.
   need to also support internal mail, where we write all those headers ourselves instead,
 	from the msg.props.
@@ -151,20 +153,10 @@ Msg
 	actual content data, and using an <img with cid: url to a converted image from the
 	attach_rendering property (image data), along with the text itself. (although i think
 	the rendering may actually include the text ??. that would explain why its always clipped.
+  can these be used for contact pictures too?
 - entryid format cf. entry_id.h. another serialized structure.
   entryids are for the addressbook connection. EMS (exchange message something), AB
 	address book. MUIDEMSAB. makes sense.
-
-- other stuff copied out of the source file:
-# need to work on reducing this. i think latest platform sdk, and
-# some tnef headers will reduce this list further.
-
-# somehow webdav related. not very interesting
-newer formula, due to escaping:
-	CGI.escape(msg.properties.subject.strip).tr('+', ' ') + '.EML' == msg.properties.url_comp_name
-suppose i should stop trying to figure these out:
-"...The range for named property identifiers is between 0x8000 and 0xFFFE."
-oh.
 
 (mapidefs.h)
 174 /* Types of message receivers */
@@ -177,17 +169,3 @@ oh.
 181 #define MAPI_SUBMITTED 0x80000000 /* This message has already been sent */
 182 #endif
 
-when i start handling recipients as well, i get lots more
-unknown property 5ff6
- * appears to be equal to display_name, and transmitable_display_name
-unknown property 5ff7
- * recipient.properties.raw['5ff7'].upcase == recipient.properties.entryid
-   is equivalent, but not all uppercase.
-	 everything else is upper though. maybe a displayname kind of thing.
-
-get the property ranges figured out, so i can group
-properties by type (transmitable or not, etc).
-
-creating ones in ps_mapi works strangely, as ps_mapi is the top levels ones.
-don't get entries in nameid. as should match the definitions.
-however still get allocated an 8 number. that number becomes permanent...
