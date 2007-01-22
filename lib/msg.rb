@@ -4,7 +4,6 @@ $: << File.dirname(__FILE__)
 
 require 'yaml'
 require 'base64'
-require 'logger'
 
 require 'ole/storage'
 require 'mime'
@@ -31,22 +30,7 @@ class Msg
 	# decoding at the moment.
 	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
 
-	Log = Logger.new STDERR
-	Log.formatter = proc do |severity, time, progname, msg|
-		# find where we were called from, in our code
-		callstack = caller.dup
-		callstack.shift while callstack.first =~ /\/logger\.rb:\d+:in/
-		from = callstack.first.sub /:in `(.*?)'/, ":\\1"
-		"[%s %s]\n%-7s%s\n" % [time.strftime('%H:%M:%S'), from, severity, msg.to_s]
-	end
-	# void logger
-	# there should be something like Logger::VOID, as this wouldn't be uncommon.
-	# or maybe you should just use STDERR, and set a level so that nothing prints anyway
-	#.instance_eval do
-	#	%w[warn debug info].each do |sym|
-	#		define_method(sym) {}
-	#	end
-	#end
+	Log = Logger.new_with_callstack
 
 	attr_reader :root, :attachments, :recipients, :headers, :properties
 	alias props :properties

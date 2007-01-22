@@ -1,13 +1,14 @@
 #! /usr/bin/ruby -w
 
-require 'test/unit'
-
 Dir.chdir File.dirname(__FILE__)
-require './../lib/ole/storage'
+$: << '../lib'
+
+require 'test/unit'
+require 'ole/storage'
 
 class TestStorage < Test::Unit::TestCase
 	def setup
-		@ole = Ole::Storage.new open('test-word-6.doc', 'rb')
+		@ole = Ole::Storage.load open('test-word-6.doc', 'rb')
 	end
 
 	def teardown
@@ -15,29 +16,20 @@ class TestStorage < Test::Unit::TestCase
 	end
 
 	def test_header
-		# num_fat_blocks, root_start_block, unk2, unk3, dir_flag,
-		# unk4, fat_next_block, num_extra_fat_blocks
-		assert_equal [1, 117, 0, 4096, 2, 1, 4294967294, 0], @ole.header.to_a[2..-1]
-	end
-
-	def test_blocks
-		# test getting the -1 block. blocks are -1 based, with that first one being the header block
-		assert_equal @ole.blocks[-1][0...Ole::Storage::MAGIC.length], Ole::Storage::MAGIC, 'magic test'
-		# other than that block, we have 119 in this file
-		assert_equal 119, @ole.blocks.length, 'num blocks'
-		# test loading of block data
-		assert_equal Ole::Storage::Blocks::BLOCK_SIZE, @ole.blocks[0].length, 'block load'
-		# 4 of the 5 directories are in the root_start_block
-		assert_equal 4, @ole.blocks[117].dirs.length, 'dirs in block'
+		# should have further header tests, testing the validation etc.
+		assert_equal 18, @ole.header.to_a.length
+		assert_equal 117, @ole.header.dirent_start
+		assert_equal 1, @ole.header.num_bat
+		assert_equal 1, @ole.header.num_sbat
+		assert_equal 0, @ole.header.num_mbat
 	end
 
 	def test_fat
-		# must confess i don't really understand the fat stuff
-		# there is only one fat block in this file
-		assert_equal [0], @ole.fat.reject { |i| i == (1 << 32) - 1 }, 'fat pointer table'
 		# the fat block has all the numbers from 5..118 bar 117
-		assert_equal((5..118).to_a - [117], @ole.blocks.get_fat_block(0).
-			reject { |i| i >= (1 << 32) - 3 }.sort, 'fat block')
+		bbat_table = [112] + ((5..118).to_a - [112, 117])
+		assert_equal bbat_table, @ole.bbat.table.reject { |i| i >= (1 << 32) - 3 }, 'bbat'
+		sbat_table = (1..43).to_a - [2, 3]
+		assert_equal sbat_table, @ole.sbat.table.reject { |i| i >= (1 << 32) - 3 }, 'sbat'
 	end
 
 	def test_directories
@@ -48,6 +40,16 @@ class TestStorage < Test::Unit::TestCase
 
 	def test_utf16_conversion
 		assert_equal 'Root Entry', @ole.root.name
+		assert_equal 'WordDocument', @ole.root.children[2].name
+	end
+
+	def test_data
+		# test the ole storage type
+		compobj = @ole.root.children.find { |child| child.name == "\001CompObj" }
+		assert_equal 'Microsoft Word 6.0-Dokument', compobj.data[/^.{32}([^\x00]+)/m, 1]
+		# i was actually not loading data correctly before, so carefully check everything here
+		hashes = [-482597081, 285782478, 134862598, -863988921]
+		assert_equal hashes, @ole.root.children.map { |child| child.data.hash }
 	end
 end
 

@@ -46,7 +46,8 @@ spec = Gem::Specification.new do |s|
 	#s.rubyforge_project = %q{rubyntlm}
 
 	s.files = Dir.glob('data/*.yaml')
-	s.files += ['rtfdecompr.exe', 'rtf2html.exe']
+	exe = RUBY_PLATFORM['win'] ? '.exe' : ''
+	s.files += ['rtfdecompr' + exe, 'rtf2html' + exe]
 	s.files += Dir.glob("lib/**/*.rb")
 	
 	s.has_rdoc = false

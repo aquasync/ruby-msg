@@ -2,44 +2,23 @@
 
 require 'iconv'
 require 'date'
+require 'support'
 
 module Ole
+	Log = Logger.new_with_callstack
+
 	# basic class to provide access to OLE2 structured storage files, such as those produced by
 	# microsoft office, eg *.doc, *.msg etc.
 	# based on chicago's libole, source available at
 	# http://prdownloads.sf.net/chicago/ole.tgz
 	# augmented later by pole, and a bit from gsf.
 	class Storage
-		VERSION = '1.0.6'
+		VERSION = '1.0.8'
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
 		attr_reader :io, :header, :bbat, :sbat, :dirs, :sb_blocks, :root
 		def initialize
-		end
-
-		def read_big_blocks blocks, size=nil
-			block_size = 1 << @header.b_shift
-			data = ''
-			blocks.each do |block|
-				@io.seek block_size * (block + 1)
-				data << @io.read(block_size)
-			end
-			data = data[0, size] if size and size < data.length
-			data
-		end
-
-		def read_small_blocks blocks, size=nil
-			data = ''
-			blocks.each do |block|
-				# small blocks are essentially files within a a small block file.
-				# this does an efficient map, of a small block file to its position in the parent file.
-				idx, pos = (block * (1 << @header.s_shift)).divmod 1 << @header.b_shift
-				pos += (1 << @header.b_shift) * (@sb_blocks[idx] + 1)
-				@io.seek pos
-				data << @io.read(1 << @header.s_shift)
-			end
-			data = data[0, size] if size and size < data.length
-			data
+			# creation of new ole objects not properly supported as yet
 		end
 
 		def self.load io
@@ -93,12 +72,37 @@ module Ole
 
 			@root = @dirs.to_tree.first
 			unused = @dirs.reject { |dir| dir.idx }.length
-			warn "* #{unused} unused directories" if unused > 0
+			Log.warn "* #{unused} unused directories" if unused > 0
 
 			@sb_blocks = @bbat.chain @root.first_block
 
 			# this warn belongs in Ole::Storage.load, as nested msgs won't have this as a name
 			Log.warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
+		end
+
+		def read_big_blocks blocks, size=nil
+			block_size = 1 << @header.b_shift
+			data = ''
+			blocks.each do |block|
+				@io.seek block_size * (block + 1)
+				data << @io.read(block_size)
+			end
+			data = data[0, size] if size and size < data.length
+			data
+		end
+
+		def read_small_blocks blocks, size=nil
+			data = ''
+			blocks.each do |block|
+				# small blocks are essentially files within a a small block file.
+				# this does an efficient map, of a small block file to its position in the parent file.
+				idx, pos = (block * (1 << @header.s_shift)).divmod 1 << @header.b_shift
+				pos += (1 << @header.b_shift) * (@sb_blocks[idx] + 1)
+				@io.seek pos
+				data << @io.read(1 << @header.s_shift)
+			end
+			data = data[0, size] if size and size < data.length
+			data
 		end
 
 		def inspect
@@ -147,7 +151,7 @@ module Ole
 				# transacting_signature != "\x00" * 4 or
 				if threshold != 4096 or
 					 reserved != "\x00" * 6
-					warn "may not be a valid OLE2 structured storage file"
+					Log.warn "may not be a valid OLE2 structured storage file"
 				end
 				true
 			end

@@ -1,0 +1,121 @@
+#summary ruby-msg - A library for reading Outlook msg files, and for converting them to RFC2822 emails.
+
+= Introduction =
+
+Generally, the goal of the project is the conversion of .msg files into proper rfc2822
+emails, independent of outlook, or any platform dependencies etc. 
+In fact its currently pure ruby, so it should be easy to get started with.
+
+It draws on `msgconvert.pl`, but tries to take a cleaner and more complete approach.
+Neither are complete yet, however, but I think that this project provides a clean foundation upon which to work on a good converter for msg files for use in outlook migrations etc.
+
+I am happy to accept patches, give commit bits etc.
+
+Please let me know how it works for you, any feedback would be welcomed.
+
+= Usage =
+
+Higher level access to the msg, can be had through the top level data accessors.
+
+{{{
+require 'msg'
+
+msg = Msg.load open(filename)
+
+# access to the 3 main data stores, if you want to poke with the msg
+# internals
+msg.recipients
+# => [#<Recipient:'\'Marley, Bob\' <bob.marley@gmail.com>'>]
+msg.attachments
+# => [#<Attachment filename='blah1.tif'>, #<Attachment filename='blah2.tif'>]
+msg.properties
+# => #<Properties ... normalized_subject='Testing' ... 
+# creation_time=#<DateTime: 2454042.45074714,0,2299161> ...>
+}}}
+
+To completely abstract away all msg peculiarities, convert the msg to a mime object.
+The message as a whole, and some of its main parts support conversion to mime objects.
+
+{{{
+msg.attachments.first.to_mime
+# => #<Mime content_type='application/octet-stream'>
+mime = msg.to_mime
+puts mime.to_tree
+# =>
+- #<Mime content_type='multipart/mixed'>
+  |- #<Mime content_type='multipart/alternative'>
+  |  |- #<Mime content_type='text/plain'>
+  |  \- #<Mime content_type='text/html'>
+  |- #<Mime content_type='application/octet-stream'>
+  \- #<Mime content_type='application/octet-stream'>
+
+# convert mime object to serialised form,
+# inclusive of attachments etc. (not ideal in memory, but its wip).
+puts mime.to_s
+}}}
+
+You can also access the underlying ole object, and see all the gory details of how msgs are serialised:
+
+{{{
+puts msg.ole.root.to_tree
+# =>
+- #<OleDir:"Root Entry" size=3840 time="2006-11-03T00:52:53Z">
+  |- #<OleDir:"__nameid_version1.0" size=0 time="2006-11-03T00:52:53Z">
+  |  |- #<OleDir:"__substg1.0_00020102" size=16 data="CCAGAAAAAADAAA...">
+  |  |- #<OleDir:"__substg1.0_00030102" size=64 data="DoUAAAYAAABShQ...">
+  |  |- #<OleDir:"__substg1.0_00040102" size=0 data="">
+  |  |- #<OleDir:"__substg1.0_10010102" size=16 data="UoUAAAYAAQAQhQ...">
+  |  |- #<OleDir:"__substg1.0_10090102" size=8 data="GIUAAAYABgA=">
+  |  |- #<OleDir:"__substg1.0_100A0102" size=8 data="BoUAAAYABwA=">
+  |  |- #<OleDir:"__substg1.0_100F0102" size=8 data="A4UAAAYABAA=">
+  |  |- #<OleDir:"__substg1.0_10110102" size=8 data="AYUAAAYAAwA=">
+  |  |- #<OleDir:"__substg1.0_10120102" size=8 data="DoUAAAYAAAA=">
+  |  \- #<OleDir:"__substg1.0_101E0102" size=8 data="VIUAAAYAAgA=">
+  |- #<OleDir:"__substg1.0_001A001E" size=8 data="SVBNLk5vdGU=">
+  ...
+  |- #<OleDir:"__substg1.0_8002001E" size=4 data="MTEuMA==">
+  |- #<OleDir:"__properties_version1.0" size=800 data="AAAAAAAAAAABAA...">
+  \- #<OleDir:"__recip_version1.0_#00000000" size=0 time="2006-11-03T00:52:53Z">
+
+     |- #<OleDir:"__substg1.0_0FF60102" size=4 data="AAAAAA==">
+     |- #<OleDir:"__substg1.0_3001001E" size=4 data="YXNkZg==">
+     |- #<OleDir:"__substg1.0_5FF6001E" size=4 data="YXNkZg==">
+     \- #<OleDir:"__properties_version1.0" size=152 data="AAAAAAAAAAAeAA...">
+}}}
+
+= Further Details =
+
+Named properties have recently been implemented, and Msg::Properties now allows associated guids. Keys are represented by Msg::Properties::Key, which contains the relevant code.
+
+You can now write code like:
+{{{
+props = msg.properties
+
+props[0x0037] # access subject by mapi code
+props[0x0037, Msg::Properties::PS_MAPI] # equivalent, with explicit GUID.
+key = Msg::Properties::Key.new 0x0037 # => 0x0037
+props[key] # same again
+
+# keys support being converted to symbols, and then use a symbolic lookup
+key.to_sym # => :subject
+props[:subject] # as above
+props.subject   # still good
+}}}
+
+Under the hood, there is complete support for named properties:
+{{{
+# to get the categories as set by outlook
+props['Keywords', Msg::Properties::PS_PUBLIC_STRINGS]
+# => ["Business", "Competition", "Favorites"]
+
+# and as a fallback, the symbolic lookup will automatically use named properties,
+# which can be seen:
+props.resolve :keywords
+# => #<Key {00020329-0000-0000-c000-000000000046}/"Keywords">
+
+# which allows this to work:
+props.keywords # as above
+}}}
+
+With some more work, the property storage model should be able to reach feature
+completion.
