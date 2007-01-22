@@ -6,10 +6,10 @@ require 'rake/gempackagetask'
 require 'rbconfig'
 require 'fileutils'
 
-require './lib/storage.rb'
+require './lib/msg.rb'
 
 PKG_NAME = 'ruby-msg'
-PKG_VERSION = Ole::Storage::VERSION
+PKG_VERSION = Msg::VERSION
 
 task :default => [:test]
 
@@ -33,5 +33,31 @@ task :install do
 	dest = Config::CONFIG['sitelibdir'] + '/ole'
 	Dir.mkdir dest rescue nil
 	FileUtils.copy './lib/storage.rb', dest + '/storage.rb'
+end
+
+spec = Gem::Specification.new do |s|
+	s.name = PKG_NAME
+	s.version = PKG_VERSION
+	s.summary = %q{Ruby Msg library.}
+	s.description = %q{A library for reading Outlook msg files, and for converting them to RFC2822 emails.}
+	s.authors = ["Charles Lowe"]
+	s.email = %q{aquasync@gmail.com}
+	s.homepage = %q{http://code.google.com/p/ruby-msg}
+	#s.rubyforge_project = %q{rubyntlm}
+
+	s.files = Dir.glob('data/*.yaml')
+	s.files += ['rtfdecompr.exe', 'rtf2html.exe']
+	s.files += Dir.glob("lib/**/*.rb")
+	
+	s.has_rdoc = false
+
+	s.autorequire = 'msg'
+end
+
+Rake::GemPackageTask.new(spec) do |p|
+	p.gem_spec = spec
+	p.need_tar = true
+	p.need_zip = true
+	p.package_dir = 'build'
 end
 

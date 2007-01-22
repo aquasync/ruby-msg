@@ -1,6 +1,6 @@
 #! /usr/bin/ruby
 
-$: << './lib'
+$: << File.dirname(__FILE__)
 
 require 'yaml'
 require 'base64'
@@ -26,7 +26,10 @@ end
 #
 
 class Msg
-	VERSION = '1.2.9'
+	VERSION = '1.2.11'
+	# we look here for the yaml files in data/, and the exe files for support
+	# decoding at the moment.
+	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
 
 	Log = Logger.new STDERR
 	Log.formatter = proc do |severity, time, progname, msg|
@@ -45,20 +48,16 @@ class Msg
 	#	end
 	#end
 
-	attr_reader :ole, :attachments, :recipients, :headers, :properties
+	attr_reader :root, :attachments, :recipients, :headers, :properties
 	alias props :properties
 
 	def self.load io
-		Msg.new Ole::Storage.load(io)
+		Msg.new Ole::Storage.load(io).root
 	end
 
-	# +ole+ is an Ole::Storage object
-	def initialize ole
-		@ole = ole
-		@root = @ole.root
-
-		Log.warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
-
+	# +root+ is an Ole::Storage::OleDir object
+	def initialize root
+		@root = root
 		@attachments = []
 		@recipients = []
 		@properties = Properties.load @root
@@ -69,8 +68,10 @@ class Msg
 				case child.name
 				# these first 2 will actually be of the form
 				# 1\.0_#([0-9A-Z]{8}), where $1 is the 0 based index number in hex
+				# should i parse that and use it as an index?
 				when /__attach_version1\.0_/
-					@attachments << Attachment.new(child)
+					attach = Attachment.new(child)
+					@attachments << attach if attach.valid?
 				when /__recip_version1\.0_/
 					@recipients << Recipient.new(child)
 				when /__nameid_version1\.0/
@@ -228,16 +229,20 @@ FIXME: look at data/src/content_classes information
 		if props.body_rtf or props.body_html
 			# should plain come first?
 			mime = Mime.new "Content-Type: multipart/alternative\r\n\r\n"
-			mime.parts << Mime.new("Content-Type: text/plain\r\n\r\n" + props.body)
+			# its actually possible for plain body to be empty, but the others not.
+			# if i can get an html version, then maybe a callout to lynx can be made...
+			mime.parts << Mime.new("Content-Type: text/plain\r\n\r\n" + props.body) if props.body
 			mime.parts << Mime.new("Content-Type: text/html\r\n\r\n"  + props.body_html) if props.body_html
 			#mime.parts << Mime.new("Content-Type: text/rtf\r\n\r\n"   + props.body_rtf)  if props.body_rtf
 			# temporarily disabled the rtf. its just showing up as an attachment anyway.
 			# for now, what i can do, is this:
 			# (maybe i should just overload body_html do to this)
+			# its thus currently possible to get no body at all if the only body is rtf. that is not
+			# really acceptable
 			if props.body_rtf and !props.body_html and props.body_rtf['htmltag']
 				open('temp.html', 'w') { |f| f.write props.body_rtf }
 				begin
-					html = `./rtf2html < temp.html`
+					html = `#{SUPPORT_DIR}/rtf2html < temp.html`
 					mime.parts << Mime.new("Content-Type: text/html\r\n\r\n" + html.gsub(/(<\/html>).*\Z/mi, "\\1"))
 				ensure
 					File.unlink 'temp.html' rescue nil
@@ -354,6 +359,7 @@ FIXME: look at data/src/content_classes information
 		PSETID_Log =          '{0006200a-0000-0000-c000-000000000046}'
 
 		# Enumerable removed. not really needed
+		SUBSTG_RX = /__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?/
 
 		# access the underlying raw properties by code. no implicit type conversion
 		# by tag and whatever other higherlevel stuff i end up doing in this class.
@@ -378,14 +384,16 @@ FIXME: look at data/src/content_classes information
 				children.delete nameid_obj
 				Properties.parse_nameid nameid_obj
 			end
-			# now parse the actual properties
+			# now parse the actual properties. i think dirs that match the substg should be decoded
+			# as properties to. 0x000d is just another encoding, the dir encoding. it should match
+			# whether the object is file / dir. currently only example is embedded msgs anyway
 			children.each do |child|
 				if child.file?
 					begin
 						case child.name
 						when /__properties_version1\.0/
 							parse_properties child
-						when /__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?/
+						when SUBSTG_RX
 							parse_substg *($~[1..-1].map { |num| num.hex rescue nil } + [child])
 						else raise "bad name for mapi property #{child.name.inspect}"
 						end
@@ -491,7 +499,7 @@ FIXME: look at data/src/content_classes information
 				# outlook structure...
 				next if property == '0000'
 				case encoding
-				when '0102', '001e', '001f', '101e', '101f'
+				when '0102', '001e', '001f', '101e', '101f', '000d'
 					# ignore on purpose. not sure what its for
 					# multivalue versions ignored also
 				when '0003' # long
@@ -616,7 +624,7 @@ FIXME: look at data/src/content_classes information
 			return @body_rtf if @body_rtf
 			open('temp.rtf', 'wb') { |f| f.write rtf_compressed }
 			begin
-				@body_rtf = `./rtfdecompr temp.rtf`
+				@body_rtf = `#{SUPPORT_DIR}/rtfdecompr temp.rtf`
 			ensure
 				File.unlink 'temp.rtf'
 			end
@@ -695,8 +703,8 @@ FIXME: look at data/src/content_classes information
 		# YUCK moved here because we need Key
 		# data files that provide for the code to symbolic name mapping
 		# guids in named_map are really constant references to the above
-		MAPITAGS = open('data/mapitags.yaml') { |file| YAML.load file }
-		NAMED_MAP = Hash[*open('data/named_map.yaml') { |file| YAML.load file }.map do |key, value|
+		MAPITAGS = open("#{SUPPORT_DIR}/data/mapitags.yaml") { |file| YAML.load file }
+		NAMED_MAP = Hash[*open("#{SUPPORT_DIR}/data/named_map.yaml") { |file| YAML.load file }.map do |key, value|
 			[Key.new(key[0], const_get(key[1])), value]
 		end.flatten]
 	end
@@ -708,13 +716,40 @@ FIXME: look at data/src/content_classes information
 		def initialize obj
 			@obj = obj
 			@properties = Properties.load @obj
+			@embedded_ole = nil
+			@embedded_msg = nil
+
 			@properties.unused.each do |child|
-					# FIXME warn
-# FIXME: this is out of scope so doesn't warn anymore
-#				else ignore child
-#				if property == '3701' # data property means nested msg
-#					puts "* ignoring nested msg."
+				if child.dir? and child.name =~ Properties::SUBSTG_RX and
+					 $1 == '3701' and $2.downcase == '000d'
+					@embedded_ole = child
+					class << @embedded_ole
+						def compobj
+							return nil unless compobj = children.find { |child| child.name == "\001CompObj" }
+							compobj.data[/^.{32}([^\x00]+)/m, 1]
+						end
+
+						def embedded_type
+							temp = compobj and return temp
+							# try to guess more
+							if children.select { |child| child.name =~ /__(substg|properties|recip|attach|nameid)/ }.length > 2
+								return 'Microsoft Office Outlook Message'
+							end
+							nil
+						end
+					end
+					if @embedded_ole.embedded_type == 'Microsoft Office Outlook Message'
+						@embedded_msg = Msg.new @embedded_ole
+					end
+				end
+				# FIXME warn
 			end
+		end
+
+		def valid?
+			# something i started to notice when handling embedded ole object attachments is
+			# the particularly strange case where they're are empty attachments
+			props.raw.keys.length > 0
 		end
 
 		def filename
@@ -722,7 +757,7 @@ FIXME: look at data/src/content_classes information
 		end
 
 		def data
-			props.attach_data
+			@embedded_msg || @embedded_ole || props.attach_data
 		end
 
 		alias to_s :data
@@ -740,7 +775,9 @@ FIXME: look at data/src/content_classes information
 		end
 
 		def inspect
-			"#<#{self.class.to_s[/\w+$/]} filename=#{filename.inspect}>"
+			"#<#{self.class.to_s[/\w+$/]}" +
+				(filename ? " filename=#{filename.inspect}" : '') +
+				(@embedded_ole ? " embedded_type=#{@embedded_ole.embedded_type.inspect}" : '') + ">"
 		end
 	end
 

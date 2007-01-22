@@ -3,7 +3,7 @@
 require 'test/unit'
 
 Dir.chdir File.dirname(__FILE__)
-require './../lib/storage'
+require './../lib/ole/storage'
 
 class TestStorage < Test::Unit::TestCase
 	def setup

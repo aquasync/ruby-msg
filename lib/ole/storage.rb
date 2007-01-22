@@ -10,7 +10,7 @@ module Ole
 	# http://prdownloads.sf.net/chicago/ole.tgz
 	# augmented later by pole, and a bit from gsf.
 	class Storage
-		VERSION = '1.0.5'
+		VERSION = '1.0.6'
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
 		attr_reader :io, :header, :bbat, :sbat, :dirs, :sb_blocks, :root
@@ -96,6 +96,9 @@ module Ole
 			warn "* #{unused} unused directories" if unused > 0
 
 			@sb_blocks = @bbat.chain @root.first_block
+
+			# this warn belongs in Ole::Storage.load, as nested msgs won't have this as a name
+			Log.warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
 		end
 
 		def inspect
