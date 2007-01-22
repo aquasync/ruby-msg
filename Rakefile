@@ -6,7 +6,8 @@ require 'rake/gempackagetask'
 require 'rbconfig'
 require 'fileutils'
 
-require './lib/msg.rb'
+$: << './lib'
+require 'msg.rb'
 
 PKG_NAME = 'ruby-msg'
 PKG_VERSION = Msg::VERSION
@@ -14,7 +15,7 @@ PKG_VERSION = Msg::VERSION
 task :default => [:test]
 
 Rake::TestTask.new(:test) do |t|
-	t.test_files = FileList["test/*.rb"]
+	t.test_files = FileList["test/test_*.rb"]
 	t.warning = true
 	t.verbose = true
 end
@@ -29,6 +30,7 @@ end
 
 # not the right way of doing it. doesn't show up in rake --tasks, and can't
 # attach description
+desc 'Install files'
 task :install do
 	dest = Config::CONFIG['sitelibdir'] + '/ole'
 	Dir.mkdir dest rescue nil

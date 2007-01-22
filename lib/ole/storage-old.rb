@@ -3,16 +3,21 @@ require 'iconv'
 
 module Ole
 	#
-	# Ole class
-	# ------------------------------------------------------------------------------
-	# simple class that is intended to abstract away the details of the access to
-	# the ole objects. currently wraps a simple perl dumper based on
-	# OLE::Storage_Lite, with base64 encoding to get around some YAML incompatibilities
+	# = Introduction
+	# 
+	# Ole::Storage is a simple class intended to abstract away details of the
+	# access to the ole objects. It currently wraps a Perl dumper based on
+	# <tt>OLE::Storage_Lite</tt>, with base64 encoding to get around some YAML
+	# incompatibilities.
 	#
-	# not used any more, as the replacement ruby version is ready (ole/storage)
-	# moved here from main msg.rb
+	# It is not used any more, as the replacement pure ruby version
+	# (ole/storage) is more complete.
 	#
-	class Storage1 < OpenStruct
+	# Would also be interesting to try a simple poledump powered version.
+	# Just parsing the plain output for directory structure, then extracting
+	# specific streams when #data is requested.
+	#
+	class StorageOld < OpenStruct
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
 		TYPE_MAP = {
@@ -53,10 +58,4 @@ module Ole
 			"#<Ole::Storage @name=#{name.inspect}>"
 		end
 	end
-
-	# would be interesting to try a simple poledump powered version.
-	# just parses the plain output, for directory structure, then can
-	# extract specific streams when #data is requested
 end
-
-

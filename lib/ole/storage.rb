@@ -7,26 +7,74 @@ require 'support'
 module Ole
 	Log = Logger.new_with_callstack
 
-	# basic class to provide access to OLE2 structured storage files, such as those produced by
-	# microsoft office, eg *.doc, *.msg etc.
-	# based on chicago's libole, source available at
+	# 
+	# = Introduction
+	#
+	# Ole::Storage is a simple class intended to abstract away details of the
+	# access to OLE2 structured storage files, such as those produced by
+	# Microsoft Office, eg *.doc, *.msg etc.
+	#
+	# Initially based on chicago's libole, source available at
 	# http://prdownloads.sf.net/chicago/ole.tgz
-	# augmented later by pole, and a bit from gsf.
+	# Later augmented with some corrections by inspecting pole, and (purely
+	# for header definitions) gsf.
+	#
+	# = Usage
+	#
+	# Usage should be fairly straight forward:
+	#
+	#   # get the parent ole storage object
+	#   ole = Ole::Storage.load open('myfile.msg')
+	#   # => #<Ole::Storage io=#<File:myfile.msg> root=#<OleDir:"Root Entry"
+	#          size=2816>>
+	#   # get the top level root object and output a tree structure for
+	#   # debugging
+	#   puts ole.root.to_tree
+	#   # =>
+	#   - #<OleDir:"Root Entry" size=3840 time="2006-11-03T00:52:53Z">
+	#     |- #<OleDir:"__nameid_version1.0" size=0 time="2006-11-03T00:52:53Z">
+	#     |  |- #<OleDir:"__substg1.0_00020102" size=16 data="CCAGAAAAAADAAA...">
+	#     ...
+	#     |- #<OleDir:"__substg1.0_8002001E" size=4 data="MTEuMA==">
+	#     |- #<OleDir:"__properties_version1.0" size=800 data="AAAAAAAAAAABAA...">
+	#     \- #<OleDir:"__recip_version1.0_#00000000" size=0 time="2006-11-03T00:52:53Z">
+	#        |- #<OleDir:"__substg1.0_0FF60102" size=4 data="AAAAAA==">
+	#   	 ...
+	#
+	# = TODO
+	#
+	# 1. Some sort of streamed access to data, for scalability.
+	# 2. Other accessors for +OleDir+'s, such as #each, and +#[]+ taking index
+	#    and a relative string path.
+	# 3. Create/Update capability.
+	#
+
 	class Storage
-		VERSION = '1.0.8'
+		VERSION = '1.0.9'
+		# All +OleDir+ names are in UTF16, which we convert
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
-		attr_reader :io, :header, :bbat, :sbat, :dirs, :sb_blocks, :root
+		# The top of the ole tree structure
+		attr_reader :root
+		# The tree structure in its original flattened form
+		attr_reader :dirs
+		# The underlying io object to/from which the ole object is serialized
+		attr_reader :io
+		# Low level internals, not generally useful
+		attr_reader :header, :bbat, :sbat, :sb_blocks
+
+		# Note that creation of new ole objects not properly supported as yet
 		def initialize
-			# creation of new ole objects not properly supported as yet
 		end
 
+		# A short cut
 		def self.load io
 			ole = Storage.new
 			ole.load io
 			ole
 		end
 
+		# Load an ole document.
 		# +io+ needs to be seekable.
 		def load io
 			# we always read 512 for the header block. if the block size ends up being different,
@@ -71,15 +119,17 @@ module Ole
 			end
 
 			@root = @dirs.to_tree.first
-			unused = @dirs.reject { |dir| dir.idx }.length
-			Log.warn "* #{unused} unused directories" if unused > 0
-
+			Log.warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
 			@sb_blocks = @bbat.chain @root.first_block
 
-			# this warn belongs in Ole::Storage.load, as nested msgs won't have this as a name
-			Log.warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
+			unused = @dirs.reject { |dir| dir.idx }.length
+			Log.warn "* #{unused} unused directories" if unused > 0
 		end
 
+		# Read a chain (an array given by +blocks+) of big blocks, optionally
+		# truncating to +size+.
+		# Big blocks are of size Ole::Storage::Header#b_size, and are stored
+		# linearly.
 		def read_big_blocks blocks, size=nil
 			block_size = 1 << @header.b_shift
 			data = ''
@@ -91,11 +141,15 @@ module Ole
 			data
 		end
 
+		# Read a chain (an array given by +blocks+) of small blocks, optionally
+		# truncating to +size+.
+		# Small blocks are of size Ole::Storage::Header#s_size, and are stored
+		# as a single file, serialized using big blocks. Single blocks are
+		# mapped to big blocks using Ole::Storage#sb_blocks
 		def read_small_blocks blocks, size=nil
 			data = ''
 			blocks.each do |block|
-				# small blocks are essentially files within a a small block file.
-				# this does an efficient map, of a small block file to its position in the parent file.
+				# this tries to efficiently map a small block file to its position in the parent file.
 				idx, pos = (block * (1 << @header.s_shift)).divmod 1 << @header.b_shift
 				pos += (1 << @header.b_shift) * (@sb_blocks[idx] + 1)
 				@io.seek pos
@@ -109,7 +163,7 @@ module Ole
 			"#<#{self.class} io=#{@io.inspect} root=#{@root.inspect}>"
 		end
 
-		# class which wraps the ole header
+		# A class which wraps the ole header
 		class Header
 			MEMBERS = [
 				:magic, :clsid, :minor_ver, :major_ver, :byte_order, :b_shift, :s_shift,
@@ -200,7 +254,14 @@ module Ole
 			end
 		end
 
-		# class which wraps an ole dir
+		#
+		# A class which wraps an ole dir. Can be either a directory
+		# (<tt>OleDir#dir?</tt>) or a file (<tt>OleDir#file?</tt>)
+		#
+		# Most interaction with <tt>Ole::Storage</tt> is through this class.
+		# The 2 most important functions are <tt>OleDir#children</tt>, and
+		# <tt>OleDir#data</tt>.
+		# 
 		class OleDir
 			MEMBERS = [
 				:name_utf16, :name_len, :type_id, :colour, :prev, :next, :child,
@@ -218,7 +279,10 @@ module Ole
 				5 => :root
 			}
 
-			attr_accessor :idx, :children, :ole
+			attr_accessor :idx, :ole
+			# This returns all the children of this +OleDir+. It is filled in
+			# when the tree structure is recreated.
+			attr_accessor :children
 			def initialize
 				@values = []
 			end
@@ -268,8 +332,9 @@ module Ole
 				@time ||= file? ? nil : (OleDir.parse_time(secs1, days1) || OleDir.parse_time(secs2, days2))
 			end
 
-			# time is made of a high and low 32 bit value, comprising of the 100's of nanoseconds
-			# since 1st january 1601.
+			# Parse two 32 bit time values into a DateTime
+			# Time is stored as a high and low 32 bit value, comprising the
+			# 100's of nanoseconds since 1st january 1601 (Epoch).
 			# struct FILETIME. see eg http://msdn2.microsoft.com/en-us/library/ms724284.aspx
 			def self.parse_time low, high
 				time = EPOCH + (high * (1 << 32) + low) * 1e-7 / 86400 rescue nil

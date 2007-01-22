@@ -8,7 +8,7 @@ require 'ole/storage'
 
 class TestStorage < Test::Unit::TestCase
 	def setup
-		@ole = Ole::Storage.load open('test-word-6.doc', 'rb')
+		@ole = Ole::Storage.load open('test_word_6.doc', 'rb')
 	end
 
 	def teardown
