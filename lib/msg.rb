@@ -19,13 +19,13 @@ module Ole
 end
 
 #
-# Msg class
-# ===============================================================================
-# primary class interface to the vagaries of .msg files
+# = Introduction
+#
+# Primary class interface to the vagaries of .msg files
 #
 
 class Msg
-	VERSION = '1.2.11'
+	VERSION = '1.2.12'
 	# we look here for the yaml files in data/, and the exe files for support
 	# decoding at the moment.
 	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
@@ -164,16 +164,7 @@ class Msg
 		Log.warn "* ignoring #{obj.name} (#{obj.type.to_s})"
 	end
 
-=begin
-usually message class is one of:
-IPM.Contact (convert to .vcf)
-IPM.Activity (this is from the journal)
-IPM.Note (this is a mail -> .eml)
-IPM.Appointment (from the calendar)
-IPM.StickyNote (just a regular note. probably -> rtf)
-
-FIXME: look at data/src/content_classes information
-=end
+	# redundant?
 	def type
 		props.message_class[/IPM\.(.*)/, 1].downcase
 	end

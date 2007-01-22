@@ -1,5 +1,9 @@
 require 'logger'
 
+# 
+# A file with general support functions used by most files in the project.
+# 
+
 class Symbol
 	def to_proc
 		proc { |a| a.send self }
@@ -7,6 +11,7 @@ class Symbol
 end
 
 module Enumerable
+	# 1.9 backport
 	def group_by
 		hash = Hash.new { |hash, key| hash[key] = [] }
 		each { |item| hash[yield(item)] << item }
@@ -15,6 +20,8 @@ module Enumerable
 end
 
 class Logger
+	# A helper method for creating <tt>Logger</tt>s which produce call stack
+	# in their output
 	def self.new_with_callstack logdev=STDERR
 		log = Logger.new logdev
 		log.level = WARN

@@ -20,22 +20,15 @@ Rake::TestTask.new(:test) do |t|
 	t.verbose = true
 end
 
+=begin
 Rake::PackageTask.new(PKG_NAME, PKG_VERSION) do |p|
 	p.need_tar_gz = true
 	p.package_dir = 'build'
-	p.package_files.include("Rakefile")
-	p.package_files.include("contrib/rtfdecompr.c")
-	p.package_files.include("test/*.rb", "test/*.doc", "lib/msg.rb", "lib/ole/storage.rb")
+	p.package_files.include("Rakefile", "README")
+	p.package_files.include("contrib/*.c")
+	p.package_files.include("test/test_*.rb", "test/*.doc", "lib/*.rb", "lib/ole/storage.rb")
 end
-
-# not the right way of doing it. doesn't show up in rake --tasks, and can't
-# attach description
-desc 'Install files'
-task :install do
-	dest = Config::CONFIG['sitelibdir'] + '/ole'
-	Dir.mkdir dest rescue nil
-	FileUtils.copy './lib/storage.rb', dest + '/storage.rb'
-end
+=end
 
 spec = Gem::Specification.new do |s|
 	s.name = PKG_NAME
@@ -45,14 +38,16 @@ spec = Gem::Specification.new do |s|
 	s.authors = ["Charles Lowe"]
 	s.email = %q{aquasync@gmail.com}
 	s.homepage = %q{http://code.google.com/p/ruby-msg}
-	#s.rubyforge_project = %q{rubyntlm}
+	#s.rubyforge_project = %q{ruby-msg}
 
 	s.files = Dir.glob('data/*.yaml')
 	exe = RUBY_PLATFORM['win'] ? '.exe' : ''
+	# not great
 	s.files += ['rtfdecompr' + exe, 'rtf2html' + exe]
 	s.files += Dir.glob("lib/**/*.rb")
+	s.files += Dir.glob("test/test_*.rb") + Dir.glob("test/*.doc")
 	
-	s.has_rdoc = false
+	s.has_rdoc = true
 
 	s.autorequire = 'msg'
 end

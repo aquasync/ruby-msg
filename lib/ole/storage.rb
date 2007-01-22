@@ -10,7 +10,7 @@ module Ole
 	# 
 	# = Introduction
 	#
-	# Ole::Storage is a simple class intended to abstract away details of the
+	# <tt>Ole::Storage</tt> is a simple class intended to abstract away details of the
 	# access to OLE2 structured storage files, such as those produced by
 	# Microsoft Office, eg *.doc, *.msg etc.
 	#
@@ -44,7 +44,7 @@ module Ole
 	# = TODO
 	#
 	# 1. Some sort of streamed access to data, for scalability.
-	# 2. Other accessors for +OleDir+'s, such as #each, and +#[]+ taking index
+	# 2. Other accessors for +OleDir+'s, such as #each, and <tt>#[]</tt> taking index
 	#    and a relative string path.
 	# 3. Create/Update capability.
 	#
@@ -84,12 +84,6 @@ module Ole
 			header_block = @io.read 512
 			@header = Header.load header_block
 
-			# bbat chain is linear, as there is no other table.
-			# the metabat is a small group of big blocks, made up of longs which are the big block
-			# indices that point to blocks which are the big block allocation table chain.
-			# when loading a stream, you either grab it from the big or small chain depending on its size...
-			# note also some of the data coming from header block.
-			# that provides an array of indices, which are loaded by the bbat.
 			bbat_chain_data =
 				header_block[Header::SIZE..-1] +
 				read_big_blocks((0...@header.num_mbat).map { |i| i + @header.mbat_start })
@@ -234,6 +228,27 @@ module Ole
 			end
 		end
 
+		#
+		# +AllocationTable+'s hold the chains corresponding to files. Given
+		# an initial index, <tt>AllocationTable#chain</tt> follows the chain, returning
+		# the blocks that make up that file.
+		#
+		# There are 2 allocation tables, the bbat, and sbat, for big and small
+		# blocks respectively. The block chain should be loaded using either
+		# <tt>Storage::read_big_blocks</tt> or <tt>Storage::read_small_blocks</tt>
+		# as appropriate.
+		#
+		# Whether or not big or small blocks are used for a file depends on
+		# whether its size is over the <tt>Header#threshold</tt> level.
+		#
+		# An <tt>Ole::Storage</tt> document is serialized as a series of directory objects,
+		# which are stored in blocks throughout the file. The blocks are either
+		# big or small, and are accessed using the <tt>AllocationTable</tt>.
+		#
+		# The bbat allocation table's data is stored in the spare room in the header
+		# block, and in extra blocks throughout the file as referenced by the meta
+		# bat.  That chain is linear, as there is no higher level table.
+		#
 		class AllocationTable
 			attr_reader :ole, :table
 			def initialize ole

@@ -1,22 +1,30 @@
-# fix orderedhash for header
-
 #
-# Mime class
-# -------------------------------------------------------------------------------
-# basic mime class for really basic and probably non-standard parsing and
-# construction of MIME messages. intended for assistance in parsing the
-# transport_message_headers provided in .msg files, and as the container that
-# can serialize itself for final conversion to standard format.
+# = Introduction
 #
-
-# some of this stuff seems to duplicate a bit of the work in net/http.rb's HTTPHeader, but I
-# don't know if the overlap is sufficient. I don't want to lower case things, just for starters,
-# meaning i can use this as read/write mime representation for constructing output, and not
-# get screwed up case.
-
+# A *basic* mime class for _really_ _basic_ and probably non-standard parsing
+# and construction of MIME messages.
+#
+# Intended for two main purposes in this project:
+# 1. As the container that is used to build up the message for eventual
+#    serialization as an eml.
+# 2. For assistance in parsing the +transport_message_headers+ provided in .msg files,
+#    which are then kept through to the final eml.
+#
+# = TODO
+#
+# * Better streaming support, rather than an all-in-string approach.
+# * Add +OrderedHash+ optionally, to not lose ordering in headers.
+# * A fair bit remains to be done for this class, its fairly immature. But generally I'd like
+#   to see it be more generally useful.
+# * All sorts of correctness issues, encoding particular.
+# * Duplication of work in net/http.rb's +HTTPHeader+? Don't know if the overlap is sufficient.
+#   I don't want to lower case things, just for starters.
+#
 class Mime
 	attr_reader :headers, :body, :parts, :content_type, :preamble, :epilogue
 
+	# Create a Mime object using +str+ as an initial serialization, which must contain headers
+	# and a body (even if empty). Needs work.
 	def initialize str
 		headers, @body = $~[1..-1] if str[/(.*?\r?\n)(?:\r?\n(.*))?\Z/m]
 
@@ -42,7 +50,7 @@ class Mime
 				boundary = attrs['boundary'] or raise "no boundary for multipart message"
 
 				# splitting the body:
-				parts = body.split /--#{Regexp.quote boundary}/m
+				parts = body.split(/--#{Regexp.quote boundary}/m)
 				unless parts[-1] =~ /^--/; warn "bad multipart boundary (missing trailing --)"
 				else parts[-1][0..1] = ''
 				end
@@ -59,7 +67,7 @@ class Mime
 	end
 
 	def multipart?
-		@content_type and @content_type[/^multipart/]
+		@content_type && @content_type =~ /^multipart/ ? true : false
 	end
 
 	def inspect

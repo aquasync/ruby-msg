@@ -1,14 +1,19 @@
 #! /usr/bin/ruby -w
 
-Dir.chdir File.dirname(__FILE__)
-$: << '../lib'
+TEST_DIR = File.dirname __FILE__
+$: << "#{TEST_DIR}/../lib"
 
 require 'test/unit'
 require 'ole/storage'
 
+#
+# = TODO
+#
+# These tests could be a lot more complete.
+#
 class TestStorage < Test::Unit::TestCase
 	def setup
-		@ole = Ole::Storage.load open('test_word_6.doc', 'rb')
+		@ole = Ole::Storage.load open("#{TEST_DIR}/test_word_6.doc", 'rb')
 	end
 
 	def teardown
