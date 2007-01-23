@@ -20,6 +20,12 @@ Rake::TestTask.new(:test) do |t|
 	t.verbose = true
 end
 
+# RDocTask wasn't working for me
+desc 'Build the rdoc HTML Files'
+task :rdoc do
+	system "rdoc -S -N -m Msg -w 2 -t '#{PKG_NAME} documentation' lib"
+end
+
 =begin
 Rake::PackageTask.new(PKG_NAME, PKG_VERSION) do |p|
 	p.need_tar_gz = true
@@ -40,9 +46,10 @@ spec = Gem::Specification.new do |s|
 	s.homepage = %q{http://code.google.com/p/ruby-msg}
 	#s.rubyforge_project = %q{ruby-msg}
 
-	s.files = Dir.glob('data/*.yaml', 'Rakefile', 'README')
+	s.files  = Dir.glob('data/*.yaml') + ['Rakefile', 'README']
 	s.files += Dir.glob("lib/**/*.rb")
 	s.files += Dir.glob("test/test_*.rb") + Dir.glob("test/*.doc")
+	s.files += Dir.glob("bin/msg2eml")
 	
 	s.has_rdoc = true
 
