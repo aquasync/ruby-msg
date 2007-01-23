@@ -235,7 +235,7 @@ module Ole
 		#
 		# There are 2 allocation tables, the bbat, and sbat, for big and small
 		# blocks respectively. The block chain should be loaded using either
-		# <tt>Storage::read_big_blocks</tt> or <tt>Storage::read_small_blocks</tt>
+		# <tt>Storage#read_big_blocks</tt> or <tt>Storage#read_small_blocks</tt>
 		# as appropriate.
 		#
 		# Whether or not big or small blocks are used for a file depends on

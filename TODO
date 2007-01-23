@@ -1,4 +1,4 @@
-Highest priority
+Newer
 ------------------------
 * certain parsing still not correct, especially small properties directory, 
   things like bools, multiavlue shorts etc.
@@ -75,25 +75,7 @@ understand the relationship with existing TNEF work also.
 hmmmm for future work:
 http://blogs.msdn.com/stephen_griffin/archive/2005/10/25/484656.aspx
 
-Ole::Storage
-========================
-- still needs much cleaning
-- proper io streams for data access as opposed to current situation.
-	especially needed for large attachments
-- rewrite tests
-- generalise and test
-- split off as proper separate project?
-- formalise api, document.
-- properly investigate other alternatives, and/or missing features
-- not just read. create and update api too.
-
-Mime
-========================
-- split off into own file.
-- would need to be more general (not just mail related) and standards compliant then
-- test cases etc as above.
-
-Msg
+Older
 ========================
 - set 'From' in Msg#populate_headers.
 	Notes:
