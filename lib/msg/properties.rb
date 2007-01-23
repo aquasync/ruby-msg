@@ -387,12 +387,7 @@ class Msg
 		def body_rtf
 			return nil unless rtf_compressed
 			return @body_rtf if @body_rtf
-			open('temp.rtf', 'wb') { |f| f.write rtf_compressed }
-			begin
-				@body_rtf = `#{SUPPORT_DIR}/rtfdecompr temp.rtf`
-			ensure
-				File.unlink 'temp.rtf'
-			end
+			@body_rtf = RTF.rtfdecompr rtf_compressed
 		end
 
 		# +Properties+ are accessed by <tt>Key</tt>s, which are coerced to this class.

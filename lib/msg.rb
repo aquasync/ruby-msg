@@ -8,6 +8,7 @@ require 'base64'
 require 'support'
 require 'ole/storage'
 require 'msg/properties'
+require 'msg/rtf'
 require 'mime'
 
 module Ole
@@ -28,7 +29,7 @@ end
 #
 
 class Msg
-	VERSION = '1.2.12'
+	VERSION = '1.2.13'
 	# we look here for the yaml files in data/, and the exe files for support
 	# decoding at the moment.
 	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
@@ -217,14 +218,9 @@ class Msg
 			# (maybe i should just overload body_html do to this)
 			# its thus currently possible to get no body at all if the only body is rtf. that is not
 			# really acceptable
-			if props.body_rtf and !props.body_html and props.body_rtf['htmltag']
-				open('temp.html', 'w') { |f| f.write props.body_rtf }
-				begin
-					html = `#{SUPPORT_DIR}/rtf2html < temp.html`
-					mime.parts << Mime.new("Content-Type: text/html\r\n\r\n" + html.gsub(/(<\/html>).*\Z/mi, "\\1"))
-				ensure
-					File.unlink 'temp.html' rescue nil
-				end
+			if props.body_rtf and !props.body_html
+				html = Msg::RTF.rtf2html props.body_rtf
+				mime.parts << Mime.new("Content-Type: text/html\r\n\r\n" + html.gsub(/(<\/html>).*\Z/mi, "\\1"))
 			end
 			mime
 		else
