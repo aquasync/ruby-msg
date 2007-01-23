@@ -4,13 +4,13 @@ require 'logger'
 # A file with general support functions used by most files in the project.
 # 
 
-class Symbol
+class Symbol # :nodoc:
 	def to_proc
 		proc { |a| a.send self }
 	end
 end
 
-module Enumerable
+module Enumerable # :nodoc:
 	# 1.9 backport
 	def group_by
 		hash = Hash.new { |hash, key| hash[key] = [] }
@@ -19,7 +19,7 @@ module Enumerable
 	end
 end
 
-class Logger
+class Logger # :nodoc:
 	# A helper method for creating <tt>Logger</tt>s which produce call stack
 	# in their output
 	def self.new_with_callstack logdev=STDERR

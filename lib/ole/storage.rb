@@ -4,7 +4,7 @@ require 'iconv'
 require 'date'
 require 'support'
 
-module Ole
+module Ole # :nodoc:
 	Log = Logger.new_with_callstack
 
 	# 

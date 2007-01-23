@@ -1,12 +1,13 @@
-Newer
-------------------------
+= Low hanging fruit
+
+* some quick adjustments to Msg / Mime to allow optional use of OrderedHash
+  for the headers, to allow order to be preserved.
+* test cases for msg/properties.rb msg/rtf.rb and mime.rb
+
+= Newer
+
 * certain parsing still not correct, especially small properties directory, 
   things like bools, multiavlue shorts etc.
-* still a lot of cleaning up to do. removal of dead debug code, moving stuff
-  into the right classes.
-* unit tests, to lock down the functionality i have so far. unfortunately
-  boring.
-  fix Rakefile for install, packaging etc.
 
 * get some sort of working From: header
   there doesn't appear to be a way to get an smtp address for the sender in an
@@ -32,8 +33,6 @@ PS_ROUTING_ENTRYID
 * do something about the message class-specific range, 0x6800 through 0x7FFF.
 * multivalue encoding may explain some of the unknown data in properties objs
 * get some clean test msgs from somewhere
-* some quick adjustments to Msg / Mime to allow optional use of OrderedHash
-  for the headers, to allow order to be preserved.
 * tackle other types of msgs, such as appointments, contacts etc, converting
   to their appropriate standard types too.
   would like to look at this next. see about the content specific range
@@ -75,8 +74,9 @@ understand the relationship with existing TNEF work also.
 hmmmm for future work:
 http://blogs.msdn.com/stephen_griffin/archive/2005/10/25/484656.aspx
 
-Older
-========================
+
+= Older
+
 - set 'From' in Msg#populate_headers.
 	Notes:
 		# ways to get the sender of a mail.
@@ -139,6 +139,8 @@ Older
 - entryid format cf. entry_id.h. another serialized structure.
   entryids are for the addressbook connection. EMS (exchange message something), AB
 	address book. MUIDEMSAB. makes sense.
+
+---
 
 (mapidefs.h)
 174 /* Types of message receivers */

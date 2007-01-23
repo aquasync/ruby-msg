@@ -40,7 +40,7 @@ spec = Gem::Specification.new do |s|
 	s.homepage = %q{http://code.google.com/p/ruby-msg}
 	#s.rubyforge_project = %q{ruby-msg}
 
-	s.files = Dir.glob('data/*.yaml')
+	s.files = Dir.glob('data/*.yaml', 'Rakefile', 'README')
 	s.files += Dir.glob("lib/**/*.rb")
 	s.files += Dir.glob("test/test_*.rb") + Dir.glob("test/*.doc")
 	

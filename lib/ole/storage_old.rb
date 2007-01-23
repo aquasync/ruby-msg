@@ -17,7 +17,7 @@ module Ole
 	# Just parsing the plain output for directory structure, then extracting
 	# specific streams when #data is requested.
 	#
-	class StorageOld < OpenStruct
+	class StorageOld < OpenStruct # :nodoc:
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
 		TYPE_MAP = {
