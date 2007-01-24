@@ -1,8 +1,10 @@
-require 'logger'
+#! /usr/bin/ruby
 
 # 
 # A file with general support functions used by most files in the project.
 # 
+
+require 'logger'
 
 class Symbol # :nodoc:
 	def to_proc

@@ -97,9 +97,9 @@ class Msg
 			# of the ole name.
 			recips = (recips.sort_by { |r| r.obj.name[/\d{8}$/].hex } rescue recips)
 			# are you supposed to use ; or , to separate?
-			headers[type.to_s.sub(/^(.)/) { $1.upcase }] = [recips.join("; ")]
+			headers[type.to_s.sub(/^(.)/) { $1.upcase }] = [recips.join("; ")] unless recips.empty?
 		end
-		headers['Subject'] = [props.subject]
+		headers['Subject'] = [props.subject] if props.subject
 
 		# construct a From value
 		# should this kind of thing only be done when headers don't exist already? maybe not. if its
@@ -261,6 +261,8 @@ class Msg
 			next unless mime.headers[key].empty?
 			mime.headers[key] += vals
 		end
+		# just a stupid hack to make the content-type header last
+		mime.headers['Content-Type'] = mime.headers.delete 'Content-Type'
 
 		mime
 	end

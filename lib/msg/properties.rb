@@ -352,11 +352,13 @@ class Msg
 			@raw[resolve(arg, guid)] rescue nil
 		end
 
-		# need to rewrite the above so that i can leverage the logic for this version. maybe have
-		# a resolve, and a create_sym_to_key_mapping function
+		#--
+		# for completeness, but its a mute point until i can write to the ole
+		# objects.
 		#def []= arg, guid=nil, value
 		#	@raw[resolve(arg, guid)] = value
 		#end
+		#++
 
 		def method_missing name, *args
 			if name.to_s !~ /\=$/ and args.empty?
@@ -385,9 +387,7 @@ class Msg
 		
 		# temporary pseudo tag.
 		def body_rtf
-			return nil unless rtf_compressed
-			return @body_rtf if @body_rtf
-			@body_rtf = RTF.rtfdecompr rtf_compressed
+			@body_rtf ||= (RTF.rtfdecompr rtf_compressed rescue nil)
 		end
 
 		# +Properties+ are accessed by <tt>Key</tt>s, which are coerced to this class.

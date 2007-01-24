@@ -19,8 +19,16 @@
 # * All sorts of correctness issues, encoding particular.
 # * Duplication of work in net/http.rb's +HTTPHeader+? Don't know if the overlap is sufficient.
 #   I don't want to lower case things, just for starters.
+# * Mime was the original place I wrote #to_tree, intended as a quick debug hack.
 #
 class Mime
+	Hash = begin
+		require 'orderedhash'
+		OrderedHash
+	rescue LoadError
+		Hash
+	end
+
 	attr_reader :headers, :body, :parts, :content_type, :preamble, :epilogue
 
 	# Create a Mime object using +str+ as an initial serialization, which must contain headers

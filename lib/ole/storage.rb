@@ -45,12 +45,12 @@ module Ole # :nodoc:
 	#
 	# 1. Some sort of streamed access to data, for scalability.
 	# 2. Other accessors for +OleDir+'s, such as #each, and <tt>#[]</tt> taking index
-	#    and a relative string path.
+	#    and a relative string path. (partially done)
 	# 3. Create/Update capability.
 	#
 
 	class Storage
-		VERSION = '1.0.9'
+		VERSION = '1.0.10'
 		# All +OleDir+ names are in UTF16, which we convert
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
@@ -294,6 +294,8 @@ module Ole # :nodoc:
 				5 => :root
 			}
 
+			include Enumerable
+
 			attr_accessor :idx, :ole
 			# This returns all the children of this +OleDir+. It is filled in
 			# when the tree structure is recreated.
@@ -347,14 +349,37 @@ module Ole # :nodoc:
 				@time ||= file? ? nil : (OleDir.parse_time(secs1, days1) || OleDir.parse_time(secs2, days2))
 			end
 
+			def each(&block)
+				@children.each(&block)
+			end
+			
+			def [] idx
+				if String === idx
+					# path style look up. maybe take another arg which should
+					# allow creation later on, like pole does.
+					# this should maybe allow paths to be 'asdf/asdf/asdf', and
+					# automatically split and recurse. is '/' invalid in an ole
+					# dir name?
+					# what about warning about multiple hits for the same name?
+					children.find { |child| child.name == idx }
+				else
+					children[idx]
+				end
+			end
+
+			# FIXME: doesn't belong here
 			# Parse two 32 bit time values into a DateTime
 			# Time is stored as a high and low 32 bit value, comprising the
 			# 100's of nanoseconds since 1st january 1601 (Epoch).
 			# struct FILETIME. see eg http://msdn2.microsoft.com/en-us/library/ms724284.aspx
 			def self.parse_time low, high
-				time = EPOCH + (high * (1 << 32) + low) * 1e-7 / 86400 rescue nil
+				time = EPOCH + (high * (1 << 32) + low) * 1e-7 / 86400 rescue return
 				# extra sanity check...
-				time if time and (1800...2100) === time.year
+				unless (1800...2100) === time.year
+					Log.warn "ignoring unlikely time value #{time.to_s}"
+					return nil
+				end
+				time
 			end
 
 			def to_tree
