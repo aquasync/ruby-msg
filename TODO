@@ -3,6 +3,12 @@
 * some quick adjustments to Msg / Mime to allow optional use of OrderedHash
   for the headers, to allow order to be preserved.
 * test cases for msg/properties.rb msg/rtf.rb and mime.rb
+* regarding the mime fix ups. check out:
+
+- http://rubyforge.org/projects/rubymail/, and
+- http://rubyforge.org/projects/mime-alt-lite/
+
+both haven't been touched in 2 years though.
 
 = Newer
 
