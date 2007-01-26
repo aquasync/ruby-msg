@@ -139,3 +139,25 @@ class Mime
 	end
 end
 
+=begin
+things to consider for header work.
+encoded words:
+Subject: =?iso-8859-1?q?p=F6stal?=
+
+and other mime funkyness:
+Content-Disposition: attachment;
+	filename*0*=UTF-8''09%20%D7%90%D7%A5;
+	filename*1*=%20%D7%A1%D7%91-;
+	filename*2*=%D7%A7%95%A5.wma
+Content-Transfer-Encoding: base64
+
+and another, doing a test with an embedded newline in an attachment name, I
+get this output from evolution. I get the feeling that this is probably a bug
+with their implementation though, they weren't expecting new lines in filenames.
+Content-Disposition: attachment; filename="asdf'b\"c
+d   efgh=i: ;\\j"
+d   efgh=i: ;\\j"; charset=us-ascii
+Content-Type: text/plain; name="asdf'b\"c"; charset=us-ascii
+
+=end
+

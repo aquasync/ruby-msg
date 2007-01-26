@@ -75,19 +75,28 @@ class Msg
 	#   which encoding the value had.
 	# * Consider other MAPI property stores, such as tnef/pst. Similar model?
 	#   Generalise this one?
-	# 
+	# * Have added IO support to Ole::Storage. now need to fix Properties. can't use
+	#   current greedy-loading approach. still want strings to work nicely:
+	#     props.subject
+	#   but don't want to be loading up large binary blobs, typically attachments, eg
+	#     props.attach_data.
+	#   probably the easiest solution is that the binary "encoding", be to return an io
+	#   object instead. and you must read it if you want it as a string
+	#   maybe i can avoid the greedy model anyway? rather than parsing the properties completely,
+	#   have it be load based? you request subject, that translates into, please load the right
+	#   substg, et voila. maybe redo @raw as a lazy loading hash for substg objects, but do the
+	#   others straight away. maybe just parse keys so i know what i've got??
 	class Properties
 		# duplicated here for now
 		SUPPORT_DIR = File.dirname(__FILE__) + '/../..'
 
-		IDENTITY_PROC = proc { |a| a }
 		ENCODINGS = {
 			0x000d => 'Directory', # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually
-			0x001f => Ole::Storage::UTF16_TO_UTF8, # unicode
+			0x001f => proc { |obj| Ole::Storage::UTF16_TO_UTF8[obj.io.read] }, # unicode
 			# ascii
 			# did a[0..-2] before, seems right sometimes, but for some others it chopped the text. chomp
-			0x001e => proc { |a| a[-1] == 0 ? a[0...-2] : a },
-			0x0102 => IDENTITY_PROC, # binary?
+			0x001e => proc { |obj| a = obj.io.read; a[-1] == 0 ? a[0...-2] : a },
+			0x0102 => proc { |obj| obj.io }, # binary?
 		}
 
 		# these won't be strings for much longer.
@@ -156,9 +165,9 @@ class Msg
 							parse_substg *($~[1..-1].map { |num| num.hex rescue nil } + [child])
 						else raise "bad name for mapi property #{child.name.inspect}"
 						end
-					rescue
-						Log.warn $!
-						@unused << child
+					#rescue
+					#	Log.warn $!
+					#	@unused << child
 					end
 				else @unused << child
 				end
@@ -243,9 +252,9 @@ class Msg
 			# offset is for multivalue encodings.
 			unless encoder = ENCODINGS[encoding]
 				Log.warn "unknown encoding #{encoding}"
-				encoder = IDENTITY_PROC
+				encoder = proc { |obj| obj.io } #.read }. maybe not a good idea
 			end
-			add_property key, encoder[obj.data], offset
+			add_property key, encoder[obj], offset
 		end
 
 		# For parsing the +properties+ file. Smaller properties are serialized in one chunk,

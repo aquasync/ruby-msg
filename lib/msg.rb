@@ -39,11 +39,12 @@ class Msg
 	attr_reader :root, :attachments, :recipients, :headers, :properties
 	alias props :properties
 
+	# Alternate constructor, to create an +Msg+ directly from +io+, a seekable IO object
 	def self.load io
 		Msg.new Ole::Storage.load(io).root
 	end
 
-	# +root+ is an Ole::Storage::OleDir object
+	# Create an Msg from +root+, an <tt>Ole::Storage::OleDir</tt> object
 	def initialize root
 		@root = root
 		@attachments = []
@@ -91,13 +92,12 @@ class Msg
 		# i suppose. but that then happens before assignment. and can't be automatically undone
 		# until the header is decomposed into recipients.
 		for type, recips in recipients.group_by { |r| r.type }
-			# details of proper escaping and whatever etc are the job of recipient.to_s
-			# don't know if this sort is really needed. header folding isn't our job
 			# don't know why i bother, but if we can, we try to sort recipients by the numerical part
-			# of the ole name.
+			# of the ole name, or just leave it if we can't
 			recips = (recips.sort_by { |r| r.obj.name[/\d{8}$/].hex } rescue recips)
 			# are you supposed to use ; or , to separate?
-			headers[type.to_s.sub(/^(.)/) { $1.upcase }] = [recips.join("; ")] unless recips.empty?
+			# recips.empty? is strange. i wouldn't have thought it possible, but it was right?
+			headers[type.to_s.sub(/^(.)/) { $1.upcase }] = [recips.join('; ')] unless recips.empty?
 		end
 		headers['Subject'] = [props.subject] if props.subject
 
@@ -151,7 +151,7 @@ class Msg
 			# actually seems ok. maybe its always UTC and interpreted anyway. or can be timezoneless.
 			# i have no timezone info anyway.
 			# in gmail, i see stuff like 15 Jan 2007 00:48:19 -0000, and it displays as 11:48.
-			# similarly, if I output 
+			# can also add .localtime here if desired. but that feels wrong.
 			require 'time'
 			headers['Date'] = [Time.iso8601(time.to_s).rfc2822] if time
 		end
@@ -224,7 +224,7 @@ class Msg
 			end
 			mime
 		else
-			# check no header case. content type? etc?. not sure if my Mime will accept
+			# check no header case. content type? etc?. not sure if my Mime class will accept
 			Log.debug "taking that other path"
 			# body can be nil, hence the to_s
 			Mime.new "Content-Type: text/plain\r\n\r\n" + props.body.to_s
@@ -238,7 +238,8 @@ class Msg
 		# we always have a body
 		mime = body = body_to_mime
 
-		# do we have attachments??
+		# If we have attachments, we take the current mime root (body), and make it the first child
+		# of a new tree that will contain body and attachments.
 		unless attachments.empty?
 			mime = Mime.new "Content-Type: multipart/mixed\r\n\r\n"
 			mime.parts << body
@@ -246,13 +247,15 @@ class Msg
 		end
 
 		# at this point, mime is either
-		# - a single text/plain, consisting of the body
-		# - a multipart/alternative, consiting of a few bodies
+		# - a single text/plain, consisting of the body ('taking that other path' above. rare)
+		# - a multipart/alternative, consiting of a few bodies (plain and html body. common)
 		# - a multipart/mixed, consisting of 1 of the above 2 types of bodies, and attachments.
 		# we add this standard preamble if its multipart
 		# FIXME preamble.replace, and body.replace both suck.
 		# preamble= is doable. body= wasn't being done because body will get rewritten from parts
 		# if multipart, and is only there readonly. can do that, or do a reparse...
+		# The way i do this means that only the first preamble will say it, not preambles of nested
+		# multipart chunks.
 		mime.preamble.replace "This is a multi-part message in MIME format.\r\n" if mime.multipart?
 
 		# now that we have a root, we can mix in all our headers
@@ -261,7 +264,7 @@ class Msg
 			next unless mime.headers[key].empty?
 			mime.headers[key] += vals
 		end
-		# just a stupid hack to make the content-type header last
+		# just a stupid hack to make the content-type header last, when using OrderedHash
 		mime.headers['Content-Type'] = mime.headers.delete 'Content-Type'
 
 		mime
@@ -272,6 +275,15 @@ class Msg
 		require 'vpim/vcard'
 		# a very incomplete mapping, but its a start...
 		# can't find where to set a lot of stuff, like zipcode, jobtitle etc
+		# FIXME all the .to_s stuff is because i was to lazy to not set if nil. and setting when nil breaks
+		# the Vcard#to_s later. find a neater way that scales to many properties like this.
+		# property map perhaps, like:
+		# { 
+		#   :location => 'work',
+		#   :street   => :business_address_street,
+		#   :locality => proc { |props| [props.business_address_city, props.business_address_state].compact.join ', ' },
+		#   ...
+		# and then have the vcard filled in according to this (1-way) translation map.
 		card = Vpim::Vcard::Maker.make2 do |m|
 			# these are all standard mapi properties
 			m.add_name do |n|
@@ -318,8 +330,8 @@ class Msg
 					@embedded_ole = child
 					class << @embedded_ole
 						def compobj
-							return nil unless compobj = children.find { |child| child.name == "\001CompObj" }
-							compobj.data[/^.{32}([^\x00]+)/m, 1]
+							return nil unless compobj = children["\001CompObj"]
+							compobj.io.read[/^.{32}([^\x00]+)/m, 1]
 						end
 
 						def embedded_type
@@ -353,7 +365,15 @@ class Msg
 			@embedded_msg || @embedded_ole || props.attach_data
 		end
 
-		alias to_s :data
+		# with new stream work, its possible to not have the whole thing in memory at one time,
+		# just to save an attachment
+		#
+		# a = msg.attachments.first
+		# a.save open(File.basename(a.filename || 'attachment'), 'wb') 
+		def save io
+			raise "can only save binary data blobs, not ole dirs" if @embedded_ole
+			data.each_read { |chunk| io << chunk }
+		end
 
 		def to_mime
 			# TODO: smarter mime typing.

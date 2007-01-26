@@ -4,6 +4,121 @@ require 'iconv'
 require 'date'
 require 'support'
 
+#
+# = Introduction
+#
+# +RangesIO+ is a basic class for wrapping another IO object allowing you to arbitrarily reorder
+# slices of the input file by providing a list of ranges. Intended as an initial measure to curb
+# inefficiencies in the OleDir#data method just reading all of a file's data in one hit, with
+# no method to stream it.
+# 
+# This class will encapuslate the ranges (corresponding to big or small blocks) of any ole file
+# and thus allow reading/writing directly to the source bytes, in a streamed fashion (so just
+# getting 16 bytes doesn't read the whole thing).
+#
+# In the simplest case it can be used with a single range to provide a limited io to a section of
+# a file.
+#
+# = Limitations
+#
+# * Writing code not written yet. easy enough
+# * May be useful to have a facility for writing more than initially allocated ranges? or provide
+#   a way for a provider of ranges to catch that and transparently provide a new sink io, that
+#   can be read from at serialization time... Or allocate blocks straight away and provide ranges?
+# * No buffering. by design at the moment. Intended for large reads
+#
+class RangesIO
+	attr_reader :io, :ranges, :size, :pos
+	# +io+ is the parent io object that we are wrapping.
+	# 
+	# +ranges+ are byte offsets, either
+	# 1. an array of ranges [1..2, 4..5, 6..8] or
+	# 2. an array of arrays, where the second is length [[1, 1], [4, 1], [6, 2]] for the above
+	#    (think the way String indexing works)
+	# The +ranges+ provide sequential slices of the file that will be read. they can overlap.
+	def initialize io, ranges, opts={}
+		@opts = {:close_parent => false}.merge opts
+		@io = io
+		# convert ranges to arrays. check for negative ranges?
+		@ranges = ranges.map { |r| Range === r ? [r.begin, r.end - r.begin] : r }
+		# calculate size
+		@size = @ranges.inject(0) { |total, (pos, len)| total + len }
+		# initial position in the file
+		@pos = 0
+	end
+
+	def seek pos, whence=IO::SEEK_SET
+		# just a simple pos calculation. invalidate buffers if we had them
+		@pos = pos
+		# FIXME
+	end
+	alias pos= :seek
+
+	def close
+		@io.close if @opts[:close_parent]
+	end
+
+	def range_and_offset pos
+		off = nil
+		r = ranges.inject(0) do |total, r|
+			to = total + r[1]
+			if pos <= to
+				off = pos - total
+				break r
+			end
+			to
+		end
+		# should be impossible for any valid pos, (0...size) === pos
+		raise "unable to find range for pos #{pos.inspect}" unless off
+		return r, off
+	end
+
+	def eof?
+		@pos == @size
+	end
+
+	# read bytes from file, to a maximum of +limit+, or all available if unspecified.
+	def read limit=nil
+		data = ''
+		limit ||= size
+		# special case eof
+		return data if eof?
+		r, off = range_and_offset @pos
+		i = ranges.index r
+		# this may be conceptually nice (create sub-range starting where we are), but
+		# for a large range array its pretty wasteful. even the previous way was. but
+		# i'm not trying to optimize this atm. it may even go to c later if necessary.
+		([[r[0] + off, r[1] - off]] + ranges[i+1..-1]).each do |pos, len|
+			@io.seek pos
+			if limit < len
+				# FIXME this += isn't correct if there is a read error
+				# or something.
+				@pos += limit
+				break data << @io.read(limit) 
+			end
+			data << @io.read(len)
+			@pos += len
+			limit -= len
+		end
+		data
+	end
+
+	# this will be generalised to a module later
+	def each_read blocksize=4096
+		yield read(blocksize) until eof?
+	end
+
+	# write should look fairly similar to the above.
+	
+	def inspect
+		# the rescue is for empty files
+		pos, len = *(range_and_offset(@pos)[0] rescue [nil, nil])
+		range_str = pos ? "#{pos}..#{pos+len}" : 'nil'
+		"#<RangesIO io=#{io.inspect} size=#@size pos=#@pos "\
+			"current_range=#{range_str}>"
+	end
+end
+
 module Ole # :nodoc:
 	Log = Logger.new_with_callstack
 
@@ -43,9 +158,13 @@ module Ole # :nodoc:
 	#
 	# = TODO
 	#
-	# 1. Some sort of streamed access to data, for scalability.
+	# 1. Some sort of streamed access to data, for scalability. (initial attempt done).
 	# 2. Other accessors for +OleDir+'s, such as #each, and <tt>#[]</tt> taking index
 	#    and a relative string path. (partially done)
+	#    Maybe consider using the '/' operator, like, eg hpricot:
+	#      blah = ole.root/'__nameid_version1.0'/'__substg1.0_00020102'
+	#    good solution if '/' is a legal character, excluding ole.root['__nameid.../...']
+	#    but should also be a single operator version, such that a full path is a single object.
 	# 3. Create/Update capability.
 	#
 
@@ -140,6 +259,10 @@ module Ole # :nodoc:
 		# Small blocks are of size Ole::Storage::Header#s_size, and are stored
 		# as a single file, serialized using big blocks. Single blocks are
 		# mapped to big blocks using Ole::Storage#sb_blocks
+		# 
+		# pretty much deprecated. should be refactored, with the above, into a
+		# +small_blocks_to_ranges+ type function, that then gets passed to the RangesIO for reading
+		# and writing.
 		def read_small_blocks blocks, size=nil
 			data = ''
 			blocks.each do |block|
@@ -315,11 +438,43 @@ module Ole # :nodoc:
 			end
 
 			def data
+				# can now be implemented as
+				# io.read
 				return nil unless file? 
 				bat = @ole.send(size > @ole.header.threshold ? :bbat : :sbat)
-				msg = size > @ole.header.threshold ? :read_big_blocks : :read_small_blocks
 				chain = bat.chain(first_block)
+				msg = size > @ole.header.threshold ? :read_big_blocks : :read_small_blocks
 				@ole.send msg, chain, size
+			end
+
+			# provides io object to read the files contents from. no need to close, though
+			# could provide a block form anyway i suppose
+			def io
+				return nil unless file?
+				bat = @ole.send(size > @ole.header.threshold ? :bbat : :sbat)
+				chain = bat.chain(first_block)
+				if size > @ole.header.threshold
+					# kind of takes over :read_big_blocks
+					block_size = @ole.header.b_size
+					ranges = chain[0, (size.to_f / block_size).ceil].map do |i|
+						[block_size * (i + 1), block_size]
+					end
+					ranges.last[1] -= (ranges.length * block_size - size)
+					RangesIO.new @ole.io, ranges
+				else
+					#:read_small_blocks
+					# special case 0 size files. they have empty chains
+					return RangesIO.new @io, [] if size == 0
+					# more complicated
+					block_size = @ole.header.s_size
+					ranges = chain[0, (size.to_f / block_size).ceil].map do |block|
+						# this tries to efficiently map a small block file to its position in the parent file.
+						idx, pos = (block * block_size).divmod @ole.header.b_size
+						[pos + @ole.header.b_size * (@ole.sb_blocks[idx] + 1), block_size]
+					end
+					ranges.last[1] -= (ranges.length * block_size - size)
+					RangesIO.new @ole.io, ranges
+				end
 			end
 
 			def type
@@ -333,14 +488,6 @@ module Ole # :nodoc:
 
 			def file?
 				type == :file
-			end
-
-			def data64
-				require 'base64'
-				d = Base64.encode64(data[0..100]).delete("\n")
-				d.length > 16 ? d[0..13] + '...' : d
-				rescue
-				nil
 			end
 
 			def time
@@ -404,8 +551,12 @@ module Ole # :nodoc:
 				@values
 			end
 
+			# perhaps i should remove the data snippet. its not that useful anyway.
 			def inspect
-				data = self.data64
+				data = if file?
+					tmp = io.read(9)
+					tmp.length == 9 ? tmp[0, 5] + '...' : tmp
+				end
 				"#<OleDir:#{name.inspect} size=#{size}" +
 					"#{time ? ' time=' + time.to_s.inspect : nil}" +
 					"#{data ? ' data=' + data.inspect : nil}" +
