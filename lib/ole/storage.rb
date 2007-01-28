@@ -464,7 +464,7 @@ module Ole # :nodoc:
 				else
 					#:read_small_blocks
 					# special case 0 size files. they have empty chains
-					return RangesIO.new @io, [] if size == 0
+					return RangesIO.new(@io, []) if size == 0
 					# more complicated
 					block_size = @ole.header.s_size
 					ranges = chain[0, (size.to_f / block_size).ceil].map do |block|
