@@ -26,7 +26,27 @@ require 'support'
 #   a way for a provider of ranges to catch that and transparently provide a new sink io, that
 #   can be read from at serialization time... Or allocate blocks straight away and provide ranges?
 # * No buffering. by design at the moment. Intended for large reads
-#
+# 
+# = TODO
+# 
+# On further reflection, this class is something of a joining/optimization of
+# two separate IO classes. a SubfileIO, for providing access to a range within
+# a File as a separate IO object, and a ConcatIO, allowing the presentation of
+# a bunch of io objects as a single unified whole.
+# 
+# I will need such a ConcatIO if I'm to provide Mime#to_io, a method that will
+# convert a whole mime message into an IO stream, that can be read from.
+# It will just be the concatenation of a series of IO objects, corresponding to
+# headers and boundaries, as StringIO's, and SubfileIO objects, coming from the
+# original message proper, or RangesIO as provided by the Attachment#data, that
+# will then get wrapped by Mime in a Base64IO or similar, to get encoded on-the-
+# fly. Thus the attachment, in its plain or encoded form, and the message as a
+# whole never exists as a single string in memory, as it does now. This is a
+# fair bit of work to achieve, but generally useful I believe.
+# 
+# So, prototype libstream again in Ruby, and then optimize as required in C,
+# creating ruby-streams. Stream::File, Stream::String, etc
+# 
 class RangesIO
 	attr_reader :io, :ranges, :size, :pos
 	# +io+ is the parent io object that we are wrapping.
@@ -289,6 +309,8 @@ module Ole # :nodoc:
 			]
 			PACK = 'a8 a16 S2 a2 S2 a6 L3 a4 L6'
 			SIZE = 0x4c
+			# i have seen it pointed out that the first 4 bytes of hex,
+			# 0xd0cf11e0, is supposed to spell out docfile. hmmm :)
 			MAGIC = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # expected value of Header#magic
 
 			# 2 basic initializations, from scratch, or from a data string.

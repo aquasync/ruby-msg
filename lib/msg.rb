@@ -330,7 +330,7 @@ class Msg
 					@embedded_ole = child
 					class << @embedded_ole
 						def compobj
-							return nil unless compobj = children["\001CompObj"]
+							return nil unless compobj = self["\001CompObj"]
 							compobj.io.read[/^.{32}([^\x00]+)/m, 1]
 						end
 
