@@ -38,7 +38,7 @@ class TestStorage < Test::Unit::TestCase
 	end
 
 	def test_directories
-		assert_equal 5, @ole.dirs.length, 'have all directories'
+		assert_equal 5, @ole.dirents.length, 'have all directories'
 		# a more complicated one would be good for this
 		assert_equal 4, @ole.root.children.length, 'properly nested directories'
 	end

@@ -1,5 +1,7 @@
 #! /usr/bin/ruby -w
 
+$: << File.dirname(__FILE__) + '/..'
+
 require 'iconv'
 require 'date'
 require 'support'
@@ -9,7 +11,7 @@ require 'support'
 #
 # +RangesIO+ is a basic class for wrapping another IO object allowing you to arbitrarily reorder
 # slices of the input file by providing a list of ranges. Intended as an initial measure to curb
-# inefficiencies in the OleDir#data method just reading all of a file's data in one hit, with
+# inefficiencies in the Dirent#data method just reading all of a file's data in one hit, with
 # no method to stream it.
 # 
 # This class will encapuslate the ranges (corresponding to big or small blocks) of any ole file
@@ -142,6 +144,24 @@ end
 module Ole # :nodoc:
 	Log = Logger.new_with_callstack
 
+	module Types
+		# FIXME: doesn't belong here
+		# Parse two 32 bit time values into a DateTime
+		# Time is stored as a high and low 32 bit value, comprising the
+		# 100's of nanoseconds since 1st january 1601 (Epoch).
+		# struct FILETIME. see eg http://msdn2.microsoft.com/en-us/library/ms724284.aspx
+		def self.load_time str
+			low, high = str.unpack 'L2'
+			time = EPOCH + (high * (1 << 32) + low) * 1e-7 / 86400 rescue return
+			# extra sanity check...
+			unless (1800...2100) === time.year
+				Log.warn "ignoring unlikely time value #{time.to_s}"
+				return nil
+			end
+			time
+		end
+	end
+
 	# 
 	# = Introduction
 	#
@@ -160,26 +180,26 @@ module Ole # :nodoc:
 	#
 	#   # get the parent ole storage object
 	#   ole = Ole::Storage.load open('myfile.msg')
-	#   # => #<Ole::Storage io=#<File:myfile.msg> root=#<OleDir:"Root Entry"
+	#   # => #<Ole::Storage io=#<File:myfile.msg> root=#<Dirent:"Root Entry"
 	#          size=2816>>
 	#   # get the top level root object and output a tree structure for
 	#   # debugging
 	#   puts ole.root.to_tree
 	#   # =>
-	#   - #<OleDir:"Root Entry" size=3840 time="2006-11-03T00:52:53Z">
-	#     |- #<OleDir:"__nameid_version1.0" size=0 time="2006-11-03T00:52:53Z">
-	#     |  |- #<OleDir:"__substg1.0_00020102" size=16 data="CCAGAAAAAADAAA...">
+	#   - #<Dirent:"Root Entry" size=3840 time="2006-11-03T00:52:53Z">
+	#     |- #<Dirent:"__nameid_version1.0" size=0 time="2006-11-03T00:52:53Z">
+	#     |  |- #<Dirent:"__substg1.0_00020102" size=16 data="CCAGAAAAAADAAA...">
 	#     ...
-	#     |- #<OleDir:"__substg1.0_8002001E" size=4 data="MTEuMA==">
-	#     |- #<OleDir:"__properties_version1.0" size=800 data="AAAAAAAAAAABAA...">
-	#     \- #<OleDir:"__recip_version1.0_#00000000" size=0 time="2006-11-03T00:52:53Z">
-	#        |- #<OleDir:"__substg1.0_0FF60102" size=4 data="AAAAAA==">
+	#     |- #<Dirent:"__substg1.0_8002001E" size=4 data="MTEuMA==">
+	#     |- #<Dirent:"__properties_version1.0" size=800 data="AAAAAAAAAAABAA...">
+	#     \- #<Dirent:"__recip_version1.0_#00000000" size=0 time="2006-11-03T00:52:53Z">
+	#        |- #<Dirent:"__substg1.0_0FF60102" size=4 data="AAAAAA==">
 	#   	 ...
 	#
 	# = TODO
 	#
 	# 1. Some sort of streamed access to data, for scalability. (initial attempt done).
-	# 2. Other accessors for +OleDir+'s, such as #each, and <tt>#[]</tt> taking index
+	# 2. Other accessors for +Dirent+'s, such as #each, and <tt>#[]</tt> taking index
 	#    and a relative string path. (partially done)
 	#    Maybe consider using the '/' operator, like, eg hpricot:
 	#      blah = ole.root/'__nameid_version1.0'/'__substg1.0_00020102'
@@ -190,13 +210,13 @@ module Ole # :nodoc:
 
 	class Storage
 		VERSION = '1.0.10'
-		# All +OleDir+ names are in UTF16, which we convert
+		# All +Dirent+ names are in UTF16, which we convert
 		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
 
 		# The top of the ole tree structure
 		attr_reader :root
 		# The tree structure in its original flattened form
-		attr_reader :dirs
+		attr_reader :dirents
 		# The underlying io object to/from which the ole object is serialized
 		attr_reader :io
 		# Low level internals, not generally useful
@@ -219,81 +239,83 @@ module Ole # :nodoc:
 			# we always read 512 for the header block. if the block size ends up being different,
 			# what happens to the 109 fat entries. are there more/less entries?
 			@io = io
-			@io.seek 0
+			@io.rewind
 			header_block = @io.read 512
 			@header = Header.load header_block
 
 			bbat_chain_data =
 				header_block[Header::SIZE..-1] +
-				read_big_blocks((0...@header.num_mbat).map { |i| i + @header.mbat_start })
-			@bbat = AllocationTable.load self, bbat_chain_data.unpack('L*')[0, @header.num_bat]
-			@sbat = AllocationTable.load self, @bbat.chain(@header.sbat_start)
+				big_block_ranges((0...@header.num_mbat).map { |i| i + @header.mbat_start }).to_io.read
+			@bbat = AllocationTable.load self, :big_block_ranges,
+				bbat_chain_data.unpack('L*')[0, @header.num_bat]
+			@sbat = AllocationTable.load self, :small_block_ranges,
+				@bbat.chain(@header.sbat_start)
 
-			# get block chain for directories and load them
-			@dirs = read_big_blocks(@bbat.chain(@header.dirent_start)).scan(/.{#{OleDir::SIZE}}/mo).
-			# semantics mayn't be quite right. used to cut at first dir where dir.type == 0
-				map { |str| OleDir.load str }.reject { |dir| dir.type_id == 0 }
-			@dirs.each { |dir| dir.ole = self }
-			#p @dirs
+			# get block chain for directories, read it, then split it into chunks and load the
+			# directory entries. semantics changed - used to cut at first dir where dir.type == 0
+			@dirents = @bbat.ranges(@header.dirent_start).to_io.read.scan(/.{#{Dirent::SIZE}}/mo).
+				map { |str| Dirent.load self, str }.reject { |d| d.type_id == 0 }
 
 			# now reorder from flat into a tree
 			# links are stored in some kind of balanced binary tree
 			# check that everything is visited at least, and at most once
 			# similarly with the blocks of the file.
-			class << @dirs
+			class << @dirents
 				def to_tree idx=0
 					return [] if idx == (1 << 32) - 1
-					dir = self[idx]
-					dir.children = to_tree dir.child
-					raise "directory #{dir.inspect} used twice" if dir.idx
-					dir.idx = idx
-					to_tree(dir.prev) + [dir] + to_tree(dir.next)
+					d = self[idx]
+					d.children = to_tree d.child
+					raise "directory #{d.inspect} used twice" if d.idx
+					d.idx = idx
+					to_tree(d.prev) + [d] + to_tree(d.next)
 				end
 			end
 
-			@root = @dirs.to_tree.first
+			@root = @dirents.to_tree.first
 			Log.warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
 			@sb_blocks = @bbat.chain @root.first_block
 
-			unused = @dirs.reject { |dir| dir.idx }.length
+			unused = @dirents.reject(&:idx).length
 			Log.warn "* #{unused} unused directories" if unused > 0
 		end
 
-		# Read a chain (an array given by +blocks+) of big blocks, optionally
-		# truncating to +size+.
+		# Turn a chain (an array given by +chain+) of big blocks, optionally
+		# truncated to +size+, into an array of arrays describing the stretches of
+		# bytes in the file that it belongs to.
+		#
 		# Big blocks are of size Ole::Storage::Header#b_size, and are stored
-		# linearly.
-		def read_big_blocks blocks, size=nil
-			block_size = 1 << @header.b_shift
-			data = ''
-			blocks.each do |block|
-				@io.seek block_size * (block + 1)
-				data << @io.read(block_size)
-			end
-			data = data[0, size] if size and size < data.length
-			data
+		# directly in the parent file.
+		def big_block_ranges chain, size=nil
+			block_size = @header.b_size
+			# truncate the chain if required
+			chain = chain[0...(size.to_f / block_size).ceil] if size
+			# convert chain to ranges of the block size
+			ranges = chain.map { |i| [block_size * (i + 1), block_size] }
+			# truncate final range if required
+			ranges.last[1] -= (ranges.length * block_size - size) if ranges.last and size
+			io = @io
+			class << ranges; self; end.send(:define_method, :to_io) { RangesIO.new io, self }
+			ranges
 		end
 
-		# Read a chain (an array given by +blocks+) of small blocks, optionally
-		# truncating to +size+.
+		# As above, for +big_block_ranges+, but for small blocks.
+		#
 		# Small blocks are of size Ole::Storage::Header#s_size, and are stored
 		# as a single file, serialized using big blocks. Single blocks are
 		# mapped to big blocks using Ole::Storage#sb_blocks
-		# 
-		# pretty much deprecated. should be refactored, with the above, into a
-		# +small_blocks_to_ranges+ type function, that then gets passed to the RangesIO for reading
-		# and writing.
-		def read_small_blocks blocks, size=nil
-			data = ''
-			blocks.each do |block|
+		def small_block_ranges chain, size=nil
+			block_size = @header.s_size
+			chain = chain[0...(size.to_f / block_size).ceil] if size
+			ranges = chain.map do |i|
 				# this tries to efficiently map a small block file to its position in the parent file.
-				idx, pos = (block * (1 << @header.s_shift)).divmod 1 << @header.b_shift
-				pos += (1 << @header.b_shift) * (@sb_blocks[idx] + 1)
-				@io.seek pos
-				data << @io.read(1 << @header.s_shift)
+				idx, pos = (i * block_size).divmod @header.b_size
+				[pos + @header.b_size * (@sb_blocks[idx] + 1), block_size]
 			end
-			data = data[0, size] if size and size < data.length
-			data
+			ranges.last[1] -= (ranges.length * block_size - size) if size
+			#ranges.send(:define_method, :to_io) { RangesIO.new @io, self }
+			io = @io
+			class << ranges; self; end.send(:define_method, :to_io) { RangesIO.new io, self }
+			ranges
 		end
 
 		def inspect
@@ -396,14 +418,15 @@ module Ole # :nodoc:
 		#
 		class AllocationTable
 			attr_reader :ole, :table
-			def initialize ole
+			def initialize ole, range_conv
 				@ole = ole
 				@table = []
+				@range_conv =  range_conv
 			end
 
-			def self.load ole, chain
-				at = AllocationTable.new ole
-				at.table.replace ole.read_big_blocks(chain).unpack('L*')
+			def self.load ole, range_conv, chain
+				at = AllocationTable.new ole, range_conv
+				at.table.replace ole.big_block_ranges(chain).to_io.read.unpack('L*')
 				at
 			end
 
@@ -412,28 +435,35 @@ module Ole # :nodoc:
 				raise "broken allocationtable chain" if start < 0 || start > @table.length
 				[start] + chain(@table[start])
 			end
+
+			def ranges chain, size=nil
+				chain = self.chain(chain) unless Array === chain
+				@ole.send @range_conv, chain, size
+			end
 		end
 
 		#
-		# A class which wraps an ole dir. Can be either a directory
-		# (<tt>OleDir#dir?</tt>) or a file (<tt>OleDir#file?</tt>)
+		# A class which wraps an ole directroy entry. Can be either a directory
+		# (<tt>Dirent#dir?</tt>) or a file (<tt>Dirent#file?</tt>)
 		#
 		# Most interaction with <tt>Ole::Storage</tt> is through this class.
-		# The 2 most important functions are <tt>OleDir#children</tt>, and
-		# <tt>OleDir#data</tt>.
+		# The 2 most important functions are <tt>Dirent#children</tt>, and
+		# <tt>Dirent#data</tt>.
 		# 
-		class OleDir
+		class Dirent
 			MEMBERS = [
 				:name_utf16, :name_len, :type_id, :colour, :prev, :next, :child,
 				:clsid, :flags, # dirs only
-				:secs1, :days1, # create time
-				:secs2, :days2, # modify time
+				:create_time_str, # create time
+				:modify_time_str, # modify time
 				:first_block, :size, :reserved
 			]
-			PACK = 'a64 S C C L3 a16 L7 a4'
+			PACK = 'a64 S C C L3 a16 L a8 a8 L2 a4'
 			SIZE = 128
 			EPOCH = DateTime.parse '1601-01-01'
 			TYPE_MAP = {
+				# this is temporary
+				0 => :empty,
 				1 => :dir,
 				2 => :file,
 				5 => :root
@@ -442,65 +472,46 @@ module Ole # :nodoc:
 			include Enumerable
 
 			attr_accessor :idx, :ole
-			# This returns all the children of this +OleDir+. It is filled in
+			# This returns all the children of this +Dirent+. It is filled in
 			# when the tree structure is recreated.
 			attr_accessor :children
-			def initialize
+			attr_reader :type, :create_time, :modify_time, :name
+			def initialize ole
+				@ole = ole
 				@values = []
+				@type = nil
+				@create_time = @modify_time = nil
 			end
 
-			def self.load str
-				dir = OleDir.new
-				dir.to_a.replace str.unpack(PACK)
-				dir
+			def self.load ole, str
+				dirent = Dirent.new ole
+				dirent.load str
+				dirent
 			end
 
-			def name
-				UTF16_TO_UTF8[name_utf16[0...name_len].sub(/\x00\x00$/, '')]
-			end
-
-			def data
-				# can now be implemented as
-				# io.read
-				return nil unless file? 
-				bat = @ole.send(size > @ole.header.threshold ? :bbat : :sbat)
-				chain = bat.chain(first_block)
-				msg = size > @ole.header.threshold ? :read_big_blocks : :read_small_blocks
-				@ole.send msg, chain, size
+			def load str
+				@values = str.unpack PACK
+				@name = UTF16_TO_UTF8[name_utf16[0...name_len].sub(/\x00\x00$/, '')]
+				@type = TYPE_MAP[type_id] or raise "unknown type #{type_id.inspect}"
+				if file?
+					@create_time = Types.load_time create_time_str
+					@modify_time = Types.load_time modify_time_str
+				end
 			end
 
 			# provides io object to read the files contents from. no need to close, though
 			# could provide a block form anyway i suppose
-			def io
+			def to_io
 				return nil unless file?
-				bat = @ole.send(size > @ole.header.threshold ? :bbat : :sbat)
-				chain = bat.chain(first_block)
-				if size > @ole.header.threshold
-					# kind of takes over :read_big_blocks
-					block_size = @ole.header.b_size
-					ranges = chain[0, (size.to_f / block_size).ceil].map do |i|
-						[block_size * (i + 1), block_size]
-					end
-					ranges.last[1] -= (ranges.length * block_size - size)
-					RangesIO.new @ole.io, ranges
-				else
-					#:read_small_blocks
-					# special case 0 size files. they have empty chains
-					return RangesIO.new(@io, []) if size == 0
-					# more complicated
-					block_size = @ole.header.s_size
-					ranges = chain[0, (size.to_f / block_size).ceil].map do |block|
-						# this tries to efficiently map a small block file to its position in the parent file.
-						idx, pos = (block * block_size).divmod @ole.header.b_size
-						[pos + @ole.header.b_size * (@ole.sb_blocks[idx] + 1), block_size]
-					end
-					ranges.last[1] -= (ranges.length * block_size - size)
-					RangesIO.new @ole.io, ranges
-				end
+				bat = size > @ole.header.threshold ? @ole.bbat : @ole.sbat
+				bat.ranges(first_block, size).to_io
 			end
 
-			def type
-				TYPE_MAP[type_id] or raise "unknown type #{type_id.inspect}"
+			# backwards compatability
+			alias io :to_io
+
+			def data
+				io.read
 			end
 
 			def dir?
@@ -515,7 +526,8 @@ module Ole # :nodoc:
 			def time
 				# time is nil for streams, otherwise try to parse either of the time pairse (not
 				# sure of their meaning - created / modified?)
-				@time ||= file? ? nil : (OleDir.parse_time(secs1, days1) || OleDir.parse_time(secs2, days2))
+				#@time ||= file? ? nil : (Dirent.parse_time(secs1, days1) || Dirent.parse_time(secs2, days2))
+				create_time || modify_time
 			end
 
 			def each(&block)
@@ -534,21 +546,6 @@ module Ole # :nodoc:
 				else
 					children[idx]
 				end
-			end
-
-			# FIXME: doesn't belong here
-			# Parse two 32 bit time values into a DateTime
-			# Time is stored as a high and low 32 bit value, comprising the
-			# 100's of nanoseconds since 1st january 1601 (Epoch).
-			# struct FILETIME. see eg http://msdn2.microsoft.com/en-us/library/ms724284.aspx
-			def self.parse_time low, high
-				time = EPOCH + (high * (1 << 32) + low) * 1e-7 / 86400 rescue return
-				# extra sanity check...
-				unless (1800...2100) === time.year
-					Log.warn "ignoring unlikely time value #{time.to_s}"
-					return nil
-				end
-				time
 			end
 
 			def to_tree
@@ -579,7 +576,7 @@ module Ole # :nodoc:
 					tmp = io.read(9)
 					tmp.length == 9 ? tmp[0, 5] + '...' : tmp
 				end
-				"#<OleDir:#{name.inspect} size=#{size}" +
+				"#<Dirent:#{name.inspect} size=#{size}" +
 					"#{time ? ' time=' + time.to_s.inspect : nil}" +
 					"#{data ? ' data=' + data.inspect : nil}" +
 					">"

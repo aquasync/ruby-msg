@@ -44,7 +44,7 @@ class Msg
 		Msg.new Ole::Storage.load(io).root
 	end
 
-	# Create an Msg from +root+, an <tt>Ole::Storage::OleDir</tt> object
+	# Create an Msg from +root+, an <tt>Ole::Storage::Dirent</tt> object
 	def initialize root
 		@root = root
 		@attachments = []

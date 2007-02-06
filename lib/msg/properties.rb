@@ -125,7 +125,7 @@ class Msg
 
 		# access the underlying raw property hash
 		attr_reader :raw
-		# unused (non-property) objects after parsing an +OleDir+.
+		# unused (non-property) objects after parsing an +Dirent+.
 		attr_reader :unused
 		attr_reader :nameid
 
@@ -144,7 +144,7 @@ class Msg
 			prop
 		end
 
-		# Parse properties from the +OleDir+ obj
+		# Parse properties from the +Dirent+ obj
 		def load obj
 			# we need to do the nameid first, as it provides the map for later user defined properties
 			children = obj.children.dup
@@ -174,7 +174,7 @@ class Msg
 			end
 		end
 
-		# Read nameid from the +OleDir+ obj, which is used for mapping of named properties keys to
+		# Read nameid from the +Dirent+ obj, which is used for mapping of named properties keys to
 		# proxy keys in the 0x8000 - 0xffff range.
 		# Returns a hash of integer -> Key.
 		def self.parse_nameid obj
@@ -229,7 +229,7 @@ class Msg
 			Hash[*props.flatten]
 		end
 
-		# Parse an +OleDir+, as per <tt>msgconvert.pl</tt>. This is how larger properties, such
+		# Parse an +Dirent+, as per <tt>msgconvert.pl</tt>. This is how larger properties, such
 		# as strings, binary blobs, and other ole sub-directories (eg nested Msg) are stored.
 		def parse_substg key, encoding, offset, obj
 			if (encoding & 0x1000) != 0
@@ -286,7 +286,7 @@ class Msg
 					add_property key, data[8, 4].unpack('L')[0] != 0
 				when '0040' # systime
 					# seems to work:
-					add_property key, Ole::Storage::OleDir.parse_time(*data[8..-1].unpack('L*'))
+					add_property key, Ole::Storage::Dirent.parse_time(*data[8..-1].unpack('L*'))
 				else
 					Log.warn "ignoring data in __properties section, encoding: #{encoding}"
 					Log << data.unpack('H*').inspect + "\n"
