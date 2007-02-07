@@ -19,6 +19,10 @@ module Enumerable # :nodoc:
 		each { |item| hash[yield(item)] << item }
 		hash
 	end
+
+	def sum initial=0
+		inject(initial) { |a, b| a + b }
+	end
 end
 
 class Logger # :nodoc:

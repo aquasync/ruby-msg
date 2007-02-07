@@ -248,6 +248,7 @@ module Ole # :nodoc:
 				big_block_ranges((0...@header.num_mbat).map { |i| i + @header.mbat_start }).to_io.read
 			@bbat = AllocationTable.load self, :big_block_ranges,
 				bbat_chain_data.unpack('L*')[0, @header.num_bat]
+			# FIXME i don't currently use @header.num_sbat which i should
 			@sbat = AllocationTable.load self, :small_block_ranges,
 				@bbat.chain(@header.sbat_start)
 
@@ -329,7 +330,7 @@ module Ole # :nodoc:
 				:reserved, :csectdir, :num_bat, :dirent_start, :transacting_signature, :threshold,
 				:sbat_start, :num_sbat, :mbat_start, :num_mbat
 			]
-			PACK = 'a8 a16 S2 a2 S2 a6 L3 a4 L6'
+			PACK = 'a8 a16 S2 a2 S2 a6 L3 a4 L5'
 			SIZE = 0x4c
 			# i have seen it pointed out that the first 4 bytes of hex,
 			# 0xd0cf11e0, is supposed to spell out docfile. hmmm :)
@@ -421,7 +422,7 @@ module Ole # :nodoc:
 			def initialize ole, range_conv
 				@ole = ole
 				@table = []
-				@range_conv =  range_conv
+				@range_conv = range_conv
 			end
 
 			def self.load ole, range_conv, chain
