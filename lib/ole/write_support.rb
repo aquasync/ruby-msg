@@ -79,6 +79,7 @@ module Ole
 			end
 
 			def save
+			if 0
 				tmp = Iconv.new('utf-16le', 'utf-8').iconv(name) + 0.chr * 2
 				tmp = tmp[0, 64] if tmp.length > 64
 				self.name_len = tmp.length
@@ -95,6 +96,7 @@ module Ole
 					self.create_time_str = 0.chr * 8
 					self.modify_time_str = 0.chr * 8
 				end
+			end
 				@values.pack PACK
 			end
 		end
@@ -105,7 +107,8 @@ module Ole
 			# empty header to be filled in later.
 			io.write 0.chr * @header.b_size
 			# recreate dirs from our tree
-			@dirents = @root.flatten
+			# temporarily disabled this step. use original tree
+			#@dirents = @root.flatten
 			# we assume that the header values are mostly all ok.
 			# well that was the easy bit. what follows is to actually create all the file streams.
 			# now serialize all the dirents first. that should be easy. actually the dir chain has
