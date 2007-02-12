@@ -144,7 +144,7 @@ class Msg
 			time = nil unless Date === time
 			# can employ other methods for getting a time. heres one in a similar vein to msgconvert.pl,
 			# ie taking the time from an ole object
-			time ||= @ole.dirs.map { |dir| dir.time }.compact.sort.last
+			time ||= @root.ole.dirents.map(&:time).compact.sort.last
 
 			# now convert and store
 			# this is a little funky. not sure about time zone stuff either?

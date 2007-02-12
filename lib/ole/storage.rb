@@ -312,7 +312,7 @@ module Ole # :nodoc:
 				idx, pos = (i * block_size).divmod @header.b_size
 				[pos + @header.b_size * (@sb_blocks[idx] + 1), block_size]
 			end
-			ranges.last[1] -= (ranges.length * block_size - size) if size
+			ranges.last[1] -= (ranges.length * block_size - size) if ranges.last and size
 			#ranges.send(:define_method, :to_io) { RangesIO.new @io, self }
 			io = @io
 			class << ranges; self; end.send(:define_method, :to_io) { RangesIO.new io, self }

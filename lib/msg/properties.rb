@@ -286,7 +286,7 @@ class Msg
 					add_property key, data[8, 4].unpack('L')[0] != 0
 				when '0040' # systime
 					# seems to work:
-					add_property key, Ole::Storage::Dirent.parse_time(*data[8..-1].unpack('L*'))
+					add_property key, Ole::Types.load_time(data[8..-1])
 				else
 					Log.warn "ignoring data in __properties section, encoding: #{encoding}"
 					Log << data.unpack('H*').inspect + "\n"
