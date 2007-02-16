@@ -1,9 +1,5 @@
 =begin
 
-plan is to begin with writing out a tree, as opposed to the api for the creation of that
-tree in the first place.
-essentially simple - reverse the stuff done in the load function.
-
 TODO
 
 * lock it down with tests.
@@ -41,7 +37,118 @@ Ole::Storage.open do |ole|
 	ole.dir.open('/').entries
 end
 
+but then, i lose 2 main features. the ability to easily assign to io, as just another property.
+ie, i can currently do something like:
+dirent.name = 'new name' # <= this is equivalent to "renaming"
+dirent.io = open 'some file'
+that doesn't seem like a big loss. i also lose the tree re-assignment:
+
+ole = Ole::Storage.new
+ole.instance_eval { @root = some_other_dirent }
+
+but that seems like a supreme hack anyway. the equivalent to that would involve some sort
+of tree copying implementation, like:
+
+def Ole::Storage.copy dirent_from, path_to
+	if dirent_from.file?
+		open(path_to, 'w') { |f| ... }
+	else
+		dirent_from.each do |de|
+			copy de, path_to + '/' + de.name
+		end
+	end
+end
+
+ole = Ole::Storage.new ...
+ole.file.read("\001CompObj")
+
+i'll try packing that on top for now.
+
+ole = Ole::Stroage.open ...
+
+# planned new interface for dirent manipulation:
+
+Dirent#open, for read / write to existing dirents. ie not by-name access.
+Dirent#read shortcut. ie:
+ole.root["\001CompObj"].read
+dirent = ole.root.last
+p dirent.name
+dirent.open do |io|
+	io.read 5
+	io.seek 0
+	io.truncate
+	io.write 'hello there'
+end
+
+# need to other things, deletion of existing dirents, and creation of new. do
+# both through parent as we don't have access to our parent otherwise.
+
+dirent.delete child
+
+close will only stuff with things if you open with 'w'. or maybe 'w+', otherwise you'll
+be re-writing dirents of a file you just meant to read from. the full file_system module
+will be available and recommended usage, allowing Ole::Storage, Dir, and Zip::ZipFile to be
+used pretty exchangably down the track. should be possible to write a recursive copy using
+the plain api, such that you can copy dirs/files agnostically between any of ole docs, dirs,
+and zip files.
+
+# finally, planned interface for files:
+ole = Ole::Storage.new/open filename/io object
+ole.root. .....
+# this finalises in the way our save currently does.
+ole.close
+
+# then we just need to be able to make ole in memory:
+# eg, for a future conversion of embedded excel file into a genuine ole file
+# attachment, in Attachment#to_mime, i will handle ole files by saving them:
+stringio = StringIO.new
+Ole::Storage.new stringio do |ole|
+	Dirent.copy ole.root, msg.attachments[0].data
+end
+stringio.string
+# then base64 encode and away we go...
 =end
+
+module Ole
+	class Storage
+		class Dirent
+			# and for creation of a dirent. don't like the name. is it a file or a directory?
+			# assign to type later? io will be empty.
+			def new_child
+				child = Dirent.new ole
+				children << child
+				yield child if block_given?
+				child
+			end
+
+			def delete child
+				# remove from our child array, so that on reflatten and re-creation of @dirents, it will be gone
+				raise "#{child.inspect} not a child of #{self.inspect}" unless @children.delete child
+				# free our blocks
+				child.open { |io| io.truncate 0 }
+			end
+
+			def / path
+				self[path]
+			end
+
+			def self.copy src, dst
+				src.name = dst.name
+				if src.dir?
+					raise unless dst.dir?
+					src.children.each do |src_child|
+						dst.new_child { |dst_child| Dirent.copy src_child, dst_child }
+					end
+				else
+					raise unless dst.file?
+					src.open do |src_io|
+						dst.open { |dst_io| IO.copy src_io, dst_io }
+					end
+				end
+			end
+		end
+	end
+end
 
 class IO
 	def self.copy src, dst
@@ -59,6 +166,62 @@ class File
 end
 
 class RangesIO
+	attr_reader :first_block
+	# temporarily putting this here. requires @bat, and @first_block. maybe a @dirent would
+	# serve better.
+	def truncate size
+		# note that old_blocks is != @ranges.length necessarily. i'm planning to write a
+		# merge_ranges function that merges sequential ranges into one as an optimization.
+		old_num_blocks, new_num_blocks = [@size, size].map { |i| (i / @bat.block_size.to_f).ceil }
+		if old_num_blocks == new_num_blocks
+			@ranges = @bat.ranges @first_block, size
+			@size = size
+			return
+		end
+		blocks = @bat.chain @first_block
+		at = Ole::Storage::AllocationTable
+		if new_num_blocks < old_num_blocks
+		# old_num_blocks should be blocks.length.
+			# de-allocate some of our old blocks. TODO maybe zero them out in the file???
+#			sample chain     [2, 1, 3]
+#			sample bat table [AVAIL, 3, 1, EOC]
+			(new_num_blocks...old_num_blocks).each { |i| @bat.table[blocks[i]] = at::AVAIL }
+			# put EOC, but handle corner case of truncate 0
+			if new_num_blocks > 0
+				@bat.table[blocks[new_num_blocks-1]] = at::EOC 
+			else
+				@first_block = at::EOC
+			end
+		else # new_num_blocks > old_num_blocks
+			# need some more blocks.
+			last_block = blocks.last
+			(new_num_blocks - old_num_blocks).times do
+				block = @bat.get_free_block
+				# connect the chain. handle corner case of blocks being [] initially
+				if last_block
+					@bat.table[last_block] = block 
+				else
+					@first_block = block
+				end
+				last_block = block
+				# this is just to inhibit the problem where it gets picked as being a free block
+				# again next time around.
+				@bat.table[last_block] = at::EOC
+			end
+		end
+		
+		@ranges = @bat.ranges @first_block, size
+		raise "something bogus happened: #{ranges.inspect} doesn't have #{new_num_blocks} blocks" unless @ranges.length == new_num_blocks
+
+		# don't know if this is required, but we explicitly request our @io to grow if necessary
+		# we never shrink it though. maybe this belongs in allocationtable, where smarter decisions
+		# can be made.
+		max = @ranges.map { |pos, len| pos + len }.max || 0
+		# maybe its ok to just seek out there later??
+		@io.truncate max if max > @io.size
+		@size = size
+	end
+
 	def write data
 		data_pos = 0
 		# we have a certain amount of available room, and don't currently provide a facility to
@@ -67,7 +230,16 @@ class RangesIO
 		# its range, or expand the allocation table etc. but then i'd probably also want to provide
 		# for a truncate call. in the case where i start with an empty allocation table, the effect
 		# should be identical.
-		raise "unable to satisfy write of #{data.length} bytes" if data.length > @size - @pos
+		if data.length > @size - @pos
+			# need to get more bytes
+			unless respond_to? :truncate
+				raise "unable to satisfy write of #{data.length} bytes" 
+				# FIXME maybe warn instead, then just truncate the data?
+			else
+				truncate @pos + data.length
+				#p "made space by truncation. resized to #{@size} bytes"
+			end
+		end
 		r, off = range_and_offset @pos
 		i = ranges.index r
 		([[r[0] + off, r[1] - off]] + ranges[i+1..-1]).each do |pos, len|
@@ -96,17 +268,16 @@ module Ole
 		end
 
 		class AllocationTable
-			AVAIL		 = 0xffffffff # a free block (I don't currently leave any blocks free)
-			EOC			 = 0xfffffffe # end of a chain
-			# these blocks correspond to the bat, and aren't part of a file, nor available.
-			# (I don't currently output these)
-			BAT			 = 0xfffffffd
-			META_BAT = 0xfffffffc
-
 			# up till now allocationtable's didn't know their block size. not anymore...
 			# this should replace @range_conv
 			def type
 				@range_conv.to_s[/^[^_]+/].to_sym
+			end
+
+			def get_free_block
+				@table.each_index { |i| return i if @table[i] == AVAIL }
+				@table.push AVAIL
+				@table.length - 1
 			end
 
 			def save
@@ -123,7 +294,7 @@ module Ole
 				@ole.header.send type == :big ? :b_size : :s_size
 			end
 
-			# just allocate space for a chain
+			# just allocate space for a chain. only used by sbat at the moment
 			def new_chain size
 				# no need to worry about empty blocks etc, because we just create from scratch
 				chain_head = @table.length
@@ -134,51 +305,28 @@ module Ole
 				chain_head
 			end
 
-			def new_chain2 size, io=nil, padding=nil
-				# no need to worry about empty blocks etc, because we just create from scratch
-				chain_head = @table.length
-				num_blocks = (size / block_size.to_f).ceil
-				num_blocks.times { |i| @table << table.length + 1 }
-				@table[-1] = EOC
-				padding_bytes = num_blocks * block_size - size
+			# create a non-allocated chain, and provide an io to write to it, updating the
+			# allocation table as needed. only used by bbat at the moment, sbat needs migrating.
+			# for sbat to use it properly, sbat ranges would need to be moved to RangesIO on top of
+			# the sb_blocks implied file.
+			def new_chain4 io
+				sub_io = RangesIO.new io, []
+				bat = self
+				sub_io.instance_eval { @bat = bat; @first_block = EOC }
 				if block_given?
-					io.seek ranges(chain_head).first.first
-					yield
-					(padding_bytes / padding.length).times { io.write padding } if padding
-				end
-				chain_head
-			end
-
-			def new_chain3 size, io
-				# no need to worry about empty blocks etc, because we just create from scratch
-				chain_head = @table.length
-				num_blocks = (size / block_size.to_f).ceil
-				num_blocks.times { |i| @table << table.length + 1 }
-				@table[-1] = EOC
-				padding_bytes = num_blocks * block_size - size
-				if block_given?
-					# we can't use the #to_io method, because it uses @io, not io
-					# rangesio will seek all over the joint. do those places have to exist first?
-					# can we tell the file to be at least that big? like IO#truncate?
-					sub_io = RangesIO.new(io, ranges(chain_head))
-					max = sub_io.ranges.map { |pos, len| pos + len }.max
-					# maybe its ok to just seek out there later??
-					io.truncate max if max < io.size
 					yield sub_io
 					# further, if there are some unused are in the block, we fill it with zeros:
 					sub_io.write 0.chr * (sub_io.size - sub_io.pos)
-					#(padding_bytes / padding.length).times { io.write padding } if padding
+					nil
+				else
+					sub_io
 				end
-				chain_head
 			end
 		end
 
 # maybe cleaner to have a SmallAllocationTable, and a BigAllocationTable.
 
 		class Dirent
-			# used in the next / prev / child stuff to show that the tree ends here.
-			EOT = 0xffffffff
-
 			MEMBERS.each_with_index do |sym, i|
 				define_method(sym.to_s + '=') { |val| @values[i] = val }
 			end
@@ -237,7 +385,7 @@ module Ole
 
 			# recreate dirs from our tree, split into dirs and big and small files
 			@dirents = @root.flatten
-			dirs, files = @dirents.partition &:dir?
+			dirs, files = @dirents.partition(&:dir?)
 			big_files, small_files = files.partition { |file| file.size > @header.threshold }
 
 			# maybe later it'd be neater to do @dirents.each { |d| d.save io } ?
@@ -248,18 +396,23 @@ module Ole
 			# as we don't eagerly load all io at once.
 			new_bbat = AllocationTable.new self, :big_block_ranges
 			big_files.each do |file|
-				# we need to get the io before we rewrite its first block etc
-				file_io = file.io
-				file_io.seek 0
-				file.size = file_io.size
-				file.first_block = new_bbat.new_chain3(file.size, io) { |sub_io| IO.copy file_io, sub_io }
+				new_bbat.new_chain4 io do |sub_io|
+					# we need to get the io before we rewrite its first block etc
+					file_io = file.io
+					file_io.seek 0
+					IO.copy file_io, sub_io
+
+					# now rewrite the file's dirent
+					file.size = sub_io.size
+					file.first_block = sub_io.first_block
+					# when this block closes, the sub_io is automatically padded
+				end
 			end
 
 			# now tackle small files, and the sbblocks
 			# then put sbblocks in root first_block
-			# first lets see how big all small files are:
 			new_sbat = AllocationTable.new self, :small_block_ranges
-			@root.first_block = new_bbat.new_chain3 small_files.map(&:size).sum, io do |sub_io|
+			new_bbat.new_chain4 io do |sub_io|
 				# the big blocks that the sb_blocks file live in needs padding, and so does the small
 				# block files too. but new_chain2's seeking stuff won't work for sbat
 				small_files.each do |file|
@@ -274,27 +427,34 @@ module Ole
 					pad = 0 if pad == new_sbat.block_size
 					sub_io.write 0.chr * pad
 				end
+				@root.first_block = sub_io.first_block
 			end
 
-			# now if i add write support to rangedio, its as simple as turning that chain into an
-			# io, and writing to it. given my current approach though, i know my chains are created
-			# sequentially.
-
-			# now that we've done all the files, we know enough to write out the dirents
-			@header.dirent_start = new_bbat.new_chain3 @dirents.length * Dirent::SIZE, io do |sub_io|
+			# it may be better, rather than using a new chain, to use the existing dirent chain,
+			# truncate it to 0, and re-write it.
+			new_bbat.new_chain4 io do |sub_io|
 				@dirents.each { |dirent| sub_io.write dirent.save }
+				@header.dirent_start = sub_io.first_block
 			end
 
 			# now write out the various meta blocks, fill out header a bit
-			# ok. how to do this. first thing i suppose is to make room for the size of the sbat
-			sbat_data = new_sbat.save
-			@header.sbat_start = new_bbat.new_chain3 sbat_data.length, io do |sub_io|
-				sub_io.write sbat_data
+			new_bbat.new_chain4 io do |sub_io|
+				sub_io.write new_sbat.save
+				@header.sbat_start = sub_io.first_block
 			end
 
 			# now lets write out the bbat. the bbat's chain is not part of the bbat. but maybe i
 			# should add blocks to the bbat to hold it.
 			# firstly, create the bbat chain's actual chain data:
+			# the size of bbat_data is equal to the
+			#   bbat_data_size = ((number_of_normal_blocks + number_of_extra_bat_blocks) * 4 /
+			#			block_size.to_f).ceil * block_size
+			# saving it will require
+			#   num_bbat_blocks = (bbat_data_size / block_size.to_f).ceil
+			#   numer_of_extra_bat_blocks = num_bbat_blocks + num_mbat_blocks
+			# which will then get added to number of blocks in the above, until it stabilises.
+			# note that any existing free blocks can be used. this is the way to go, in order to
+			# have the BAT properly appearing in the allocation table.
 			bbat_data = new_bbat.save
 			# must exist as linear chain stored in header.
 			@header.num_bat = (bbat_data.length / new_bbat.block_size.to_f).ceil

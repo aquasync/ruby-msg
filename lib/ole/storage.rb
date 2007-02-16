@@ -160,7 +160,14 @@ module Ole # :nodoc:
 			end
 			time
 		end
+
+		# turn a binary guid into something displayable.
+		# this will probably become a proper class later
+		def self.load_guid str
+			"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % str.unpack('L S S CC C6')
+		end
 	end
+
 
 	# 
 	# = Introduction
@@ -263,7 +270,7 @@ module Ole # :nodoc:
 			# similarly with the blocks of the file.
 			class << @dirents
 				def to_tree idx=0
-					return [] if idx == (1 << 32) - 1
+					return [] if idx == Dirent::EOT
 					d = self[idx]
 					d.children = to_tree d.child
 					raise "directory #{d.inspect} used twice" if d.idx
@@ -294,8 +301,15 @@ module Ole # :nodoc:
 			ranges = chain.map { |i| [block_size * (i + 1), block_size] }
 			# truncate final range if required
 			ranges.last[1] -= (ranges.length * block_size - size) if ranges.last and size
-			io = @io
-			class << ranges; self; end.send(:define_method, :to_io) { RangesIO.new io, self }
+			io, ole = @io, self
+			class << ranges; self; end.send(:define_method, :to_io) do
+				rangesio = RangesIO.new io, self
+				rangesio.instance_eval do
+					@bat = ole.bbat
+					@first_block = chain.first || AllocationTable::AVAIL
+				end
+				rangesio
+			end
 			ranges
 		end
 
@@ -418,6 +432,15 @@ module Ole # :nodoc:
 		# bat.  That chain is linear, as there is no higher level table.
 		#
 		class AllocationTable
+			# a free block (I don't currently leave any blocks free), although I do pad out
+			# the allocation table with AVAIL to the block size.
+			AVAIL		 = 0xffffffff
+			EOC			 = 0xfffffffe # end of a chain
+			# these blocks correspond to the bat, and aren't part of a file, nor available.
+			# (I don't currently output these)
+			BAT			 = 0xfffffffd
+			META_BAT = 0xfffffffc
+
 			attr_reader :ole, :table
 			def initialize ole, range_conv
 				@ole = ole
@@ -431,10 +454,24 @@ module Ole # :nodoc:
 				at
 			end
 
+			# rewriting this to be non-recursive. it broke on a large attachment
+			# building up the chain, causing a stack error. need tail-call elimination...
 			def chain start
-				return [] if start >= (1 << 32) - 3
+				a = []
+				idx = start
+				until idx >= META_BAT
+					raise "broken allocationtable chain" if idx < 0 || idx > @table.length
+					a << idx
+					idx = @table[idx]
+				end
+				Log.warn "invalid chain terminator #{idx}" unless idx == EOC
+				a
+			end
+			
+			def chain_recursive start
+				return [] if start >= META_BAT
 				raise "broken allocationtable chain" if start < 0 || start > @table.length
-				[start] + chain(@table[start])
+				[start] + chain_recursive(@table[start])
 			end
 
 			def ranges chain, size=nil
@@ -469,6 +506,9 @@ module Ole # :nodoc:
 				2 => :file,
 				5 => :root
 			}
+			# used in the next / prev / child stuff to show that the tree ends here.
+			# also used for first_block for directory.
+			EOT = 0xffffffff
 
 			include Enumerable
 
@@ -500,19 +540,25 @@ module Ole # :nodoc:
 				end
 			end
 
-			# provides io object to read the files contents from. no need to close, though
-			# could provide a block form anyway i suppose
-			def to_io
+			# only defined for files really. and the above children stuff is only for children.
+			# maybe i should have some sort of File and Dir class, that subclass Dirents? a dirent
+			# is just a data holder. 
+			def open
 				return nil unless file?
 				bat = size > @ole.header.threshold ? @ole.bbat : @ole.sbat
-				bat.ranges(first_block, size).to_io
+				io = bat.ranges(first_block, size).to_io
+				io.instance_eval { @bat, @first_block = bat, first_block }
+				if block_given?
+					res = yield io
+					io.close
+					res
+				else
+					io
+				end
 			end
 
-			# backwards compatability
-			alias io :to_io
-
-			def data
-				io.read
+			def read limit=nil
+				open { |io| io.read limit }
 			end
 
 			def dir?
@@ -536,17 +582,22 @@ module Ole # :nodoc:
 			end
 			
 			def [] idx
-				if String === idx
+				if Integer === idx
+					children[idx]
+				else
 					# path style look up. maybe take another arg which should
 					# allow creation later on, like pole does.
 					# this should maybe allow paths to be 'asdf/asdf/asdf', and
 					# automatically split and recurse. is '/' invalid in an ole
 					# dir name?
 					# what about warning about multiple hits for the same name?
-					children.find { |child| child.name == idx }
-				else
-					children[idx]
+					children.find { |child| idx === child.name }
 				end
+			end
+
+			# solution for the above for now. 
+			def / path
+				self[path]
 			end
 
 			def to_tree
@@ -574,7 +625,7 @@ module Ole # :nodoc:
 			# perhaps i should remove the data snippet. its not that useful anyway.
 			def inspect
 				data = if file?
-					tmp = io.read(9)
+					tmp = read 9
 					tmp.length == 9 ? tmp[0, 5] + '...' : tmp
 				end
 				"#<Dirent:#{name.inspect} size=#{size}" +

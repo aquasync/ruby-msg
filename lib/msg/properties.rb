@@ -90,19 +90,23 @@ class Msg
 		# duplicated here for now
 		SUPPORT_DIR = File.dirname(__FILE__) + '/../..'
 
+		# note that binary and default both use obj.open. not the block form. this means we should
+		# #close it later, which we don't. as we're only reading though, it shouldn't matter right?
+		# not really good though FIXME
 		ENCODINGS = {
-			0x000d => 'Directory', # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually
-			0x001f => proc { |obj| Ole::Storage::UTF16_TO_UTF8[obj.io.read] }, # unicode
+			0x000d =>   proc { |obj| obj }, # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually. in which case we shouldn't get here right?
+			0x001f =>   proc { |obj| Ole::Storage::UTF16_TO_UTF8[obj.read] }, # unicode
 			# ascii
-			# did a[0..-2] before, seems right sometimes, but for some others it chopped the text. chomp
-			0x001e => proc { |obj| a = obj.io.read; a[-1] == 0 ? a[0...-2] : a },
-			0x0102 => proc { |obj| obj.io }, # binary?
+			# FIXME hack did a[0..-2] before, seems right sometimes, but for some others it chopped the text. chomp
+			0x001e =>   proc { |obj| a = obj.read; a[-1] == 0 ? a[0...-2] : a },
+			0x0102 =>   proc { |obj| obj.open }, # binary?
+			:default => proc { |obj| obj.open }
 		}
 
 		# these won't be strings for much longer.
 		# maybe later, the Key#inspect could automatically show symbolic guid names if they
 		# are part of this builtin list.
-		# FIXME
+		# FIXME. hey, nice that my fake string is the same length though :)
 		PS_MAPI =             '{not-really-sure-what-this-should-say}'
 		PS_PUBLIC_STRINGS =   '{00020329-0000-0000-c000-000000000046}'
 		# string properties in this namespace automatically get added to the internet headers
@@ -178,17 +182,17 @@ class Msg
 		# proxy keys in the 0x8000 - 0xffff range.
 		# Returns a hash of integer -> Key.
 		def self.parse_nameid obj
-			guids_obj = obj.children.find { |child| child.name == '__substg1.0_00020102' }
-			props_obj = obj.children.find { |child| child.name == '__substg1.0_00030102' }
-			names_obj = obj.children.find { |child| child.name == '__substg1.0_00040102' }
 			remaining = obj.children.dup
-			[guids_obj, props_obj, names_obj].each { |obj| remaining.delete obj }
+			guids_obj, props_obj, names_obj =
+				%w[__substg1.0_00020102 __substg1.0_00030102 __substg1.0_00040102].map do |name|
+					remaining.delete obj[name]
+				end
 
 			# parse guids
 			# this is the guids for named properities (other than builtin ones)
 			# i think PS_PUBLIC_STRINGS, and PS_MAPI are builtin.
-			guids = [PS_PUBLIC_STRINGS] + guids_obj.data.scan(/.{16}/m).map do |str|
-				Ole::Storage.parse_guid str
+			guids = [PS_PUBLIC_STRINGS] + guids_obj.read.scan(/.{16}/m).map do |str|
+				Ole::Types.load_guid str
 			end
 
 			# parse names.
@@ -196,20 +200,20 @@ class Msg
 			# they are no longer parsed, as they're referred to by offset not
 			# index. they are simply sequentially packed, as a long, giving
 			# the string length, then padding to 4 byte multiple, and repeat.
+			names_data = names_obj.read
 
 			# parse actual props.
 			# not sure about any of this stuff really.
 			# should flip a few bits in the real msg, to get a better understanding of how this works.
-			props = props_obj.data.scan(/.{8}/m).map do |str|
+			props = props_obj.read.scan(/.{8}/m).map do |str|
 				flags, offset = str[4..-1].unpack 'S2'
 				# the property will be serialised as this pseudo property, mapping it to this named property
 				pseudo_prop = 0x8000 + offset
 				named = flags & 1 == 1
 				prop = if named
 					str_off = *str.unpack('L')
-					data = names_obj.data
-					len = *data[str_off, 4].unpack('L')
-					Ole::Storage::UTF16_TO_UTF8[data[str_off + 4, len]]
+					len = *names_data[str_off, 4].unpack('L')
+					Ole::Storage::UTF16_TO_UTF8[names_data[str_off + 4, len]]
 				else
 					a, b = str.unpack('S2')
 					Log.debug "b not 0" if b != 0
@@ -252,7 +256,8 @@ class Msg
 			# offset is for multivalue encodings.
 			unless encoder = ENCODINGS[encoding]
 				Log.warn "unknown encoding #{encoding}"
-				encoder = proc { |obj| obj.io } #.read }. maybe not a good idea
+				#encoder = proc { |obj| obj.io } #.read }. maybe not a good idea
+				encoder = ENCODINGS[:default]
 			end
 			add_property key, encoder[obj], offset
 		end
@@ -260,7 +265,7 @@ class Msg
 		# For parsing the +properties+ file. Smaller properties are serialized in one chunk,
 		# such as longs, bools, times etc. The parsing has problems.
 		def parse_properties obj
-			data = obj.data
+			data = obj.read
 			# don't really understand this that well...
 			pad = data.length % 16
 			unless (pad == 0 || pad == 8) and data[0...pad] == "\000" * pad

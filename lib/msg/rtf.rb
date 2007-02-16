@@ -1,4 +1,5 @@
 require 'stringio'
+require 'strscan'
 
 class Msg
 	#

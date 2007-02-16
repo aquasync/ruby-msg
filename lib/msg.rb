@@ -11,14 +11,7 @@ require 'msg/properties'
 require 'msg/rtf'
 require 'mime'
 
-module Ole
-	class Storage
-		# turn a binary guid into something displayable
-		def self.parse_guid s
-			"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % s.unpack('L S S CC C6')
-		end
-	end
-end
+require 'ole/write_support'
 
 #
 # = Introduction
@@ -29,7 +22,7 @@ end
 #
 
 class Msg
-	VERSION = '1.2.13'
+	VERSION = '1.2.14'
 	# we look here for the yaml files in data/, and the exe files for support
 	# decoding at the moment.
 	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
@@ -211,7 +204,7 @@ class Msg
 			# its actually possible for plain body to be empty, but the others not.
 			# if i can get an html version, then maybe a callout to lynx can be made...
 			mime.parts << Mime.new("Content-Type: text/plain\r\n\r\n" + props.body) if props.body
-			mime.parts << Mime.new("Content-Type: text/html\r\n\r\n"  + props.body_html) if props.body_html
+			mime.parts << Mime.new("Content-Type: text/html\r\n\r\n"  + props.body_html.read) if props.body_html
 			#mime.parts << Mime.new("Content-Type: text/rtf\r\n\r\n"   + props.body_rtf)  if props.body_rtf
 			# temporarily disabled the rtf. its just showing up as an attachment anyway.
 			# for now, what i can do, is this:
@@ -324,7 +317,7 @@ class Msg
 			@embedded_msg = nil
 
 			@properties.unused.each do |child|
-				# this is fairly messy stuff.
+				# FIXME temporary hack. this is fairly messy stuff.
 				if child.dir? and child.name =~ Properties::SUBSTG_RX and
 					 $1 == '3701' and $2.downcase == '000d'
 					@embedded_ole = child
@@ -383,7 +376,9 @@ class Msg
 			mime.headers['Content-Transfer-Encoding'] = ['base64']
 			# data.to_s for now. data was nil for some reason.
 			# perhaps it was a data object not correctly handled?
-			mime.body.replace Base64.encode64(data.to_s).gsub(/\n/, "\r\n")
+			# hmmm, have to use read here. that assumes that the data isa stream.
+			# but if the attachment data is a string, then it won't work. possible?
+			mime.body.replace Base64.encode64(data.read.to_s).gsub(/\n/, "\r\n")
 			mime
 		end
 
