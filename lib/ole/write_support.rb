@@ -114,8 +114,8 @@ module Ole
 		class Dirent
 			# and for creation of a dirent. don't like the name. is it a file or a directory?
 			# assign to type later? io will be empty.
-			def new_child
-				child = Dirent.new ole
+			def new_child type
+				child = Dirent.new ole, type
 				children << child
 				yield child if block_given?
 				child
@@ -128,21 +128,18 @@ module Ole
 				child.open { |io| io.truncate 0 }
 			end
 
-			def / path
-				self[path]
-			end
-
 			def self.copy src, dst
+				# copies the contents of src to dst. must be the same type. this will throw an
+				# error on copying to root. 
+				raise unless src.type == dst.type
 				src.name = dst.name
 				if src.dir?
-					raise unless dst.dir?
 					src.children.each do |src_child|
-						dst.new_child { |dst_child| Dirent.copy src_child, dst_child }
+						dst.new_child src_child.type { |dst_child| Dirent.copy src_child, dst_child }
 					end
 				else
-					raise unless dst.file?
 					src.open do |src_io|
-						dst.open { |dst_io| IO.copy src_io, dst_io }
+						dst.open dst_child.type { |dst_io| IO.copy src_io, dst_io }
 					end
 				end
 			end
@@ -156,12 +153,6 @@ class IO
 			buf = src.read(4096)
 			dst.write buf
 		end
-	end
-end
-
-class File
-	def size
-		stat.size
 	end
 end
 
@@ -384,6 +375,7 @@ module Ole
 			#io.write 0.chr * @header.b_size
 
 			# recreate dirs from our tree, split into dirs and big and small files
+			@root.type = :root
 			@dirents = @root.flatten
 			dirs, files = @dirents.partition(&:dir?)
 			big_files, small_files = files.partition { |file| file.size > @header.threshold }

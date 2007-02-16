@@ -23,7 +23,6 @@ require 'support'
 #
 # = Limitations
 #
-# * Writing code not written yet. easy enough
 # * May be useful to have a facility for writing more than initially allocated ranges? or provide
 #   a way for a provider of ranges to catch that and transparently provide a new sink io, that
 #   can be read from at serialization time... Or allocate blocks straight away and provide ranges?
@@ -224,28 +223,61 @@ module Ole # :nodoc:
 		attr_reader :root
 		# The tree structure in its original flattened form
 		attr_reader :dirents
-		# The underlying io object to/from which the ole object is serialized
-		attr_reader :io
+		# The underlying io object to/from which the ole object is serialized, whether we
+		# should close it, and whether it is writeable
+		attr_reader :io, :close_parent, :writeable
 		# Low level internals, not generally useful
 		attr_reader :header, :bbat, :sbat, :sb_blocks
 
-		# Note that creation of new ole objects not properly supported as yet
-		def initialize
+		# maybe include an option hash, and allow :close_parent => true, to be more general.
+		# +arg+ should be either a file, or an +IO+ object, and needs to be seekable.
+		def initialize arg, mode=nil
+			# get the io object
+			@close_parent, @io = if String === arg
+				[true, open(arg, (mode || 'rb'))]
+			else
+				raise "unable to specify mode string with io object" if mode
+				[false, arg]
+			end
+			# do we have this file opened for writing? don't know of a better way to tell
+			@writeable = begin
+				@io.flush
+				true
+			rescue IOError
+				false
+			end
+			# if the io object has data, we should load it, otherwise start afresh
+			if @io.size
+				load
+			else
+				raise NotImplementedError, "unable to create new ole objects from scratch as yet"
+				# first step though is to support modifying pre-existing and saving, then this
+				# missing gap will be fairly straight forward - essentially initialize to
+				# equivalent of loading an empty ole document.
+			end
 		end
 
-		# A short cut
-		def self.load io
-			ole = Storage.new
-			ole.load io
-			ole
+		def self.new arg, mode=nil
+			ole = super
+			if block_given?
+				begin   yield ole
+				ensure; ole.close
+				end
+			else ole
+			end
 		end
 
-		# Load an ole document.
-		# +io+ needs to be seekable.
-		def load io
+		class << self
+			# encouraged
+			alias open :new
+			# deprecated
+			alias load :new
+		end
+
+		# load document from file.
+		def load
 			# we always read 512 for the header block. if the block size ends up being different,
 			# what happens to the 109 fat entries. are there more/less entries?
-			@io = io
 			@io.rewind
 			header_block = @io.read 512
 			@header = Header.load header_block
@@ -285,6 +317,13 @@ module Ole # :nodoc:
 
 			unused = @dirents.reject(&:idx).length
 			Log.warn "* #{unused} unused directories" if unused > 0
+		end
+
+		def close
+			if @writeable
+				# flush. ie, rewrite the directories etc. essentially the current save function
+			end
+			@io.close if @close_parent
 		end
 
 		# Turn a chain (an array given by +chain+) of big blocks, optionally
@@ -492,8 +531,7 @@ module Ole # :nodoc:
 			MEMBERS = [
 				:name_utf16, :name_len, :type_id, :colour, :prev, :next, :child,
 				:clsid, :flags, # dirs only
-				:create_time_str, # create time
-				:modify_time_str, # modify time
+				:create_time_str, :modify_time_str, # files only
 				:first_block, :size, :reserved
 			]
 			PACK = 'a64 S C C L3 a16 L a8 a8 L2 a4'
@@ -512,25 +550,38 @@ module Ole # :nodoc:
 
 			include Enumerable
 
-			attr_accessor :idx, :ole
+			# Dirent's should be created in 1 of 2 ways, either Dirent.new ole, [:dir/:file/:root],
+			# or Dirent.load '... dirent data ...'
+			# its a bit clunky, but thats how it is at the moment. you can assign to type, but
+			# shouldn't.
+
+			attr_accessor :idx
 			# This returns all the children of this +Dirent+. It is filled in
 			# when the tree structure is recreated.
 			attr_accessor :children
-			attr_reader :type, :create_time, :modify_time, :name
-			def initialize ole
+			attr_reader :ole, :type, :create_time, :modify_time, :name
+			def initialize ole, type
 				@ole = ole
+				# this isn't really good enough. need default values put in there.
 				@values = []
-				@type = nil
+				# maybe check types here. 
+				@type = type
 				@create_time = @modify_time = nil
+				if file?
+					@create_time = Time.now
+					@modify_time = Time.now
+				end
 			end
 
 			def self.load ole, str
-				dirent = Dirent.new ole
-				dirent.load str
+				# load should function without the need for the initializer.
+				dirent = Dirent.allocate
+				dirent.load ole, str
 				dirent
 			end
 
-			def load str
+			def load ole, str
+				@ole = ole
 				@values = str.unpack PACK
 				@name = UTF16_TO_UTF8[name_utf16[0...name_len].sub(/\x00\x00$/, '')]
 				@type = TYPE_MAP[type_id] or raise "unknown type #{type_id.inspect}"
@@ -543,17 +594,23 @@ module Ole # :nodoc:
 			# only defined for files really. and the above children stuff is only for children.
 			# maybe i should have some sort of File and Dir class, that subclass Dirents? a dirent
 			# is just a data holder. 
+			# this can be used for write support if the underlying io object was opened for writing.
+			# maybe take a mode string argument, and do truncation, append etc stuff.
 			def open
 				return nil unless file?
 				bat = size > @ole.header.threshold ? @ole.bbat : @ole.sbat
 				io = bat.ranges(first_block, size).to_io
+				# this is a bit crap
+				first_block = self.first_block
 				io.instance_eval { @bat, @first_block = bat, first_block }
 				if block_given?
-					res = yield io
-					io.close
-					res
-				else
-					io
+					begin   yield io
+					ensure
+						@values[MEMBERS.index(:size)] = io.size
+						@values[MEMBERS.index(:first_block)] = io.instance_eval { @first_block }
+						io.close
+					end
+				else io
 				end
 			end
 
@@ -638,6 +695,6 @@ module Ole # :nodoc:
 end
 
 if $0 == __FILE__
-	puts Ole::Storage.load(open(ARGV[0])).root.to_tree
+	puts Ole::Storage.open(ARGV[0]) { |ole| ole.root.to_tree }
 end
 

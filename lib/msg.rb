@@ -11,8 +11,6 @@ require 'msg/properties'
 require 'msg/rtf'
 require 'mime'
 
-require 'ole/write_support'
-
 #
 # = Introduction
 #

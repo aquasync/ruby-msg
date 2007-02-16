@@ -10,6 +10,41 @@
 
 both haven't been touched in 2 years though.
 
+= Ole
+
+* still in the middle of the big ole refactor with write support.
+  lots still to be done.
+* write support for small block files. kind of works, but need a working truncate,
+  which means support for resizing the @sb_blocks file, which can maybe be done
+  by getting an io for the file, doing a growth truncate, and updating @sb_blocks
+  with the new chain. this means i keep the optimized small block direct mapping.
+* support for shrinking the bats. sbat and bbat can grow to accomodate more data,
+  but they can't shrink yet. at least they should be cropped so that all trailing
+  AVAIL are removed at save time, then re-padded to block boundary.
+* similarly, at close/save time, we should truncate the parent io file.
+* wipe-out with 0's on truncation time not yet done (save on junk).
+* handle including bat information in the bat itself (increasingly important)
+* how to handle a small block file getting bigger than threshold, or big block
+  file getting smaller than it?? when you start writing to an empty file, it
+  should be sbat by rights, but then it gets past a certain point, and we have
+  to transparently map that 4096 bytes to a bbat file and keep going??? seems
+  incredibly messy, and will cause a lot of churn in the allocation tables.
+  neater solution???
+  maybe handle it at close time somehow? all new chains are bbat, and then get
+  migrated to sbat at close time? might be less expensive.
+* when all the above is implemented, we'll allow cheaper edits that our current
+  complete-rewrite approach, but they'll be messier. so, support a repack function.
+  it opens a temporary file, completely copies @io to it, opens it as a Storage
+  object, truncates @io, resets things like initialize would (clean header etc).
+  then it does a Dirent#copy on the 2 roots to provide a clean version.
+  thus:
+  
+  Ole::Storage.open 'myfile.doc', 'r+', &:repack
+  
+  would be a simple ole file cleaner.
+
+* then test & cleanup.
+
 = Newer
 
 * certain parsing still not correct, especially small properties directory, 

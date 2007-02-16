@@ -6,6 +6,14 @@
 
 require 'logger'
 
+class File # :nodoc:
+	# for consistency with StringIO and others. makes more sense than forcing
+	# them to provide a #stat
+	def size
+		stat.size
+	end
+end
+
 class Symbol # :nodoc:
 	def to_proc
 		proc { |a| a.send self }
