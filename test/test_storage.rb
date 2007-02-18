@@ -6,21 +6,55 @@ $: << "#{TEST_DIR}/../lib"
 require 'test/unit'
 require 'ole/storage'
 
-# just for the new api segment
-require 'ole/write_support'
-
-#
 # = TODO
 #
 # These tests could be a lot more complete.
 #
-class TestStorage < Test::Unit::TestCase
+
+class TestRangesIO < Test::Unit::TestCase
 	def setup
-		@ole = Ole::Storage.load open("#{TEST_DIR}/test_word_6.doc", 'rb')
+		# why not :) ?
+		# repeats too
+		ranges = [100..200, 0..10, 100..150]
+		@io = RangesIO.new open("#{TEST_DIR}/test_storage.rb"), ranges, :close_parent => true
 	end
 
 	def teardown
-		@ole.io.close
+		@io.close
+	end
+
+	def test_basic
+		assert_equal 160, @io.size
+		# this will map to the start of the file:
+		@io.pos = 100
+		assert_equal '#! /usr/bi', @io.read(10)
+	end
+
+	# should test range_and_offset specifically
+
+	def test_reading
+		# test selection of initial range, offset within that range
+		pos = 100
+		@io.seek pos
+		# test advancing of pos properly, by...
+		chunked = (0...10).map { @io.read 10 }.join
+		# given the file is 160 long:
+		assert_equal 60, chunked.length
+		@io.seek pos
+		# comparing with a flat read
+		assert_equal chunked, @io.read(60)
+	end
+end
+
+# should test resizeable and migrateable IO.
+
+class TestStorage < Test::Unit::TestCase
+	def setup
+		@ole = Ole::Storage.open "#{TEST_DIR}/test_word_6.doc", 'rb'
+	end
+
+	def teardown
+		@ole.close
 	end
 
 	def test_header
@@ -58,41 +92,6 @@ class TestStorage < Test::Unit::TestCase
 		# i was actually not loading data correctly before, so carefully check everything here
 		hashes = [-482597081, 285782478, 134862598, -863988921]
 		assert_equal hashes, @ole.root.children.map { |child| child.read.hash }
-	end
-end
-
-class TestRangesIO < Test::Unit::TestCase
-	def setup
-		# why not :) ?
-		# repeats too
-		ranges = [100..200, 0..10, 100..150]
-		@io = RangesIO.new open("#{TEST_DIR}/test_storage.rb"), ranges, :close_parent => true
-	end
-
-	def teardown
-		@io.close
-	end
-
-	def test_basic
-		assert_equal 160, @io.size
-		# this will map to the start of the file:
-		@io.pos = 100
-		assert_equal '#! /usr/bi', @io.read(10)
-	end
-
-	# should test range_and_offset specifically
-
-	def test_reading
-		# test selection of initial range, offset within that range
-		pos = 100
-		@io.seek pos
-		# test advancing of pos properly, by...
-		chunked = (0...10).map { @io.read 10 }.join
-		# given the file is 160 long:
-		assert_equal 60, chunked.length
-		@io.seek pos
-		# comparing with a flat read
-		assert_equal chunked, @io.read(60)
 	end
 end
 

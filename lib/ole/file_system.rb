@@ -1,5 +1,11 @@
 =begin
 
+full file_system module
+will be available and recommended usage, allowing Ole::Storage, Dir, and Zip::ZipFile to be
+used pretty exchangably down the track. should be possible to write a recursive copy using
+the plain api, such that you can copy dirs/files agnostically between any of ole docs, dirs,
+and zip files.
+
 i think its okay to have an api like this on top, but there are certain things that ole
 does that aren't captured.
 ole::storage can have multiple files with the same name, for example, or with / in the
