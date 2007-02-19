@@ -6,185 +6,8 @@ require 'iconv'
 require 'date'
 require 'support'
 
-# move to support?
-class IO
-	def self.copy src, dst
-		until src.eof?
-			buf = src.read(4096)
-			dst.write buf
-		end
-	end
-end
-
-#
-# = Introduction
-#
-# +RangesIO+ is a basic class for wrapping another IO object allowing you to arbitrarily reorder
-# slices of the input file by providing a list of ranges. Intended as an initial measure to curb
-# inefficiencies in the Dirent#data method just reading all of a file's data in one hit, with
-# no method to stream it.
-# 
-# This class will encapuslate the ranges (corresponding to big or small blocks) of any ole file
-# and thus allow reading/writing directly to the source bytes, in a streamed fashion (so just
-# getting 16 bytes doesn't read the whole thing).
-#
-# In the simplest case it can be used with a single range to provide a limited io to a section of
-# a file.
-#
-# = Limitations
-#
-# * No buffering. by design at the moment. Intended for large reads
-# 
-# = TODO
-# 
-# On further reflection, this class is something of a joining/optimization of
-# two separate IO classes. a SubfileIO, for providing access to a range within
-# a File as a separate IO object, and a ConcatIO, allowing the presentation of
-# a bunch of io objects as a single unified whole.
-# 
-# I will need such a ConcatIO if I'm to provide Mime#to_io, a method that will
-# convert a whole mime message into an IO stream, that can be read from.
-# It will just be the concatenation of a series of IO objects, corresponding to
-# headers and boundaries, as StringIO's, and SubfileIO objects, coming from the
-# original message proper, or RangesIO as provided by the Attachment#data, that
-# will then get wrapped by Mime in a Base64IO or similar, to get encoded on-the-
-# fly. Thus the attachment, in its plain or encoded form, and the message as a
-# whole never exists as a single string in memory, as it does now. This is a
-# fair bit of work to achieve, but generally useful I believe.
-# 
-# This class isn't ole specific, maybe move it to my general ruby stream project.
-# 
-class RangesIO
-	attr_reader :io, :ranges, :size, :pos
-	# +io+ is the parent io object that we are wrapping.
-	# 
-	# +ranges+ are byte offsets, either
-	# 1. an array of ranges [1..2, 4..5, 6..8] or
-	# 2. an array of arrays, where the second is length [[1, 1], [4, 1], [6, 2]] for the above
-	#    (think the way String indexing works)
-	# The +ranges+ provide sequential slices of the file that will be read. they can overlap.
-	def initialize io, ranges, opts={}
-		@opts = {:close_parent => false}.merge opts
-		@io = io
-		# convert ranges to arrays. check for negative ranges?
-		@ranges = ranges.map { |r| Range === r ? [r.begin, r.end - r.begin] : r }
-		# calculate size
-		@size = @ranges.inject(0) { |total, (pos, len)| total + len }
-		# initial position in the file
-		@pos = 0
-	end
-
-	def pos= pos, whence=IO::SEEK_SET
-		# FIXME support other whence values
-		raise NotImplementedError, "#{whence.inspect} not supported" unless whence == IO::SEEK_SET
-		# just a simple pos calculation. invalidate buffers if we had them
-		@pos = pos
-	end
-
-	alias seek :pos=
-	alias tell :pos
-
-	def close
-		@io.close if @opts[:close_parent]
-	end
-
-	def range_and_offset pos
-		off = nil
-		r = ranges.inject(0) do |total, r|
-			to = total + r[1]
-			if pos <= to
-				off = pos - total
-				break r
-			end
-			to
-		end
-		# should be impossible for any valid pos, (0...size) === pos
-		raise "unable to find range for pos #{pos.inspect}" unless off
-		[r, off]
-	end
-
-	def eof?
-		@pos == @size
-	end
-
-	# read bytes from file, to a maximum of +limit+, or all available if unspecified.
-	def read limit=nil
-		data = ''
-		limit ||= size
-		# special case eof
-		return data if eof?
-		r, off = range_and_offset @pos
-		i = ranges.index r
-		# this may be conceptually nice (create sub-range starting where we are), but
-		# for a large range array its pretty wasteful. even the previous way was. but
-		# i'm not trying to optimize this atm. it may even go to c later if necessary.
-		([[r[0] + off, r[1] - off]] + ranges[i+1..-1]).each do |pos, len|
-			@io.seek pos
-			if limit < len
-				# FIXME this += isn't correct if there is a read error
-				# or something.
-				@pos += limit
-				break data << @io.read(limit) 
-			end
-			data << @io.read(len)
-			@pos += len
-			limit -= len
-		end
-		data
-	end
-
-	# you may override this call to update @ranges and @size, if applicable. then write
-	# support can grow below
-	def truncate size
-		raise NotImplementedError, 'truncate not supported'
-	end
-	# why not? :)
-	alias size= :truncate
-
-	def write data
-		data_pos = 0
-		# if we don't have room, we can use the truncate hook to make more space.
-		if data.length > @size - @pos
-			begin
-				truncate @pos + data.length
-			rescue NotImplementedError
-				# FIXME maybe warn instead, then just truncate the data?
-				raise "unable to satisfy write of #{data.length} bytes" 
-			end
-		end
-		r, off = range_and_offset @pos
-		i = ranges.index r
-		([[r[0] + off, r[1] - off]] + ranges[i+1..-1]).each do |pos, len|
-			@io.seek pos
-			if data_pos + len > data.length
-				chunk = data[data_pos..-1]
-				@io.write chunk
-				@pos += chunk.length
-				data_pos = data.length
-				break
-			end
-			@io.write data[data_pos, len]
-			@pos += len
-			data_pos += len
-		end
-		data_pos
-	end
-
-	# this will be generalised to a module later
-	def each_read blocksize=4096
-		yield read(blocksize) until eof?
-	end
-
-	# write should look fairly similar to the above.
-	
-	def inspect
-		# the rescue is for empty files
-		pos, len = *(range_and_offset(@pos)[0] rescue [nil, nil])
-		range_str = pos ? "#{pos}..#{pos+len}" : 'nil'
-		"#<#{self.class} io=#{io.inspect} size=#@size pos=#@pos "\
-			"current_range=#{range_str}>"
-	end
-end
+# not strictly ole related
+require 'ole/io_helpers'
 
 module Ole # :nodoc:
 	Log = Logger.new_with_callstack
@@ -212,7 +35,6 @@ module Ole # :nodoc:
 			"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % str.unpack('L S S CC C6')
 		end
 	end
-
 
 	# 
 	# = Introduction
@@ -257,9 +79,7 @@ module Ole # :nodoc:
 	#
 
 	class Storage
-		VERSION = '1.0.10'
-		# All +Dirent+ names are in UTF16, which we convert
-		UTF16_TO_UTF8 = Iconv.new('utf-8', 'utf-16le').method :iconv
+		VERSION = '1.1.1'
 
 		# The top of the ole tree structure
 		attr_reader :root
@@ -269,7 +89,7 @@ module Ole # :nodoc:
 		# should close it, and whether it is writeable
 		attr_reader :io, :close_parent, :writeable
 		# Low level internals, you probably shouldn't need to mess with these
-		attr_reader :header, :bbat, :sbat, :sb_blocks
+		attr_reader :header, :bbat, :sbat, :sb_file
 
 		# maybe include an option hash, and allow :close_parent => true, to be more general.
 		# +arg+ should be either a file, or an +IO+ object, and needs to be seekable.
@@ -323,24 +143,24 @@ module Ole # :nodoc:
 			header_block = @io.read 512
 			@header = Header.load header_block
 
-			bbat_chain_data =
-				header_block[Header::SIZE..-1] +
-				big_block_ranges((0...@header.num_mbat).map { |i| i + @header.mbat_start }).to_io.read
-			@bbat = AllocationTable.load self, :big_block_ranges,
-				bbat_chain_data.unpack('L*')[0, @header.num_bat]
-			# FIXME i don't currently use @header.num_sbat which i should
-			@sbat = AllocationTable.load self, :small_block_ranges,
-				@bbat.chain(@header.sbat_start)
+			# create an empty bbat
+			@bbat = AllocationTable::Big.new self
+			# extra mbat blocks
+			mbat_blocks = (0...@header.num_mbat).map { |i| i + @header.mbat_start }
+			bbat_chain = (header_block[Header::SIZE..-1] + @bbat.read(mbat_blocks)).unpack 'L*'
+			# am i using num_bat in the right way?
+			@bbat.load @bbat.read(bbat_chain[0, @header.num_bat])
 	
 			# get block chain for directories, read it, then split it into chunks and load the
 			# directory entries. semantics changed - used to cut at first dir where dir.type == 0
-			@dirents = @bbat.ranges(@header.dirent_start).to_io.read.scan(/.{#{Dirent::SIZE}}/mo).
+			@dirents = @bbat.read(@header.dirent_start).scan(/.{#{Dirent::SIZE}}/mo).
 				map { |str| Dirent.load self, str }.reject { |d| d.type_id == 0 }
 
 			# now reorder from flat into a tree
 			# links are stored in some kind of balanced binary tree
 			# check that everything is visited at least, and at most once
 			# similarly with the blocks of the file.
+			# was thinking of moving this to Dirent.to_tree instead.
 			class << @dirents
 				def to_tree idx=0
 					return [] if idx == Dirent::EOT
@@ -354,29 +174,19 @@ module Ole # :nodoc:
 
 			@root = @dirents.to_tree.first
 			Log.warn "root name was #{@root.name.inspect}" unless @root.name == 'Root Entry'
-			@sb_blocks = @bbat.chain @root.first_block
-			# sb_blocks could now be handled like this:
-			#@sb_blocks = RangesIOResizable.new @io, @bbat, @root.first_block
-			# # then redirect its first_block
-			#root = @root
-			#class << @sb_blocks
-			#  def first_block
-			#    root.first_block
-			#  end
-			#  def first_block= val
-			#    root.first_block = val
-			#  end
-			#end
-			# then @sb_blocks is read/writeable/resizeable not migrateable, and updates the @root
-			# automagically. probably better is just to copy first_block at flush time. for less
-			# integration.
-
 			unused = @dirents.reject(&:idx).length
 			Log.warn "* #{unused} unused directories" if unused > 0
+
+			# FIXME i don't currently use @header.num_sbat which i should
+			# hmm. nor do i write it. it means what exactly again?
+			@sb_file = RangesIOResizeable.new @io, @bbat, @root.first_block
+			@sbat = AllocationTable::Small.new self
+			@sbat.load @bbat.read(@header.sbat_start)
 		end
 
 		def close
 			flush if @writeable
+			@sb_file.close
 			@io.close if @close_parent
 		end
 
@@ -397,6 +207,7 @@ destroy things.
 			@root.type = :root
 			# for now.
 			@root.name = 'Root Entry'
+			@root.first_block = @sb_file.first_block
 			@dirents = @root.flatten
 			#dirs, files = @dirents.partition(&:dir?)
 			#big_files, small_files = files.partition { |file| file.size > @header.threshold }
@@ -492,44 +303,6 @@ destroy things.
 			@io.flush
 		end
 
-		# Turn a chain (an array given by +chain+) of big blocks, optionally
-		# truncated to +size+, into an array of arrays describing the stretches of
-		# bytes in the file that it belongs to.
-		#
-		# Big blocks are of size Ole::Storage::Header#b_size, and are stored
-		# directly in the parent file.
-		def big_block_ranges chain, size=nil
-			block_size = @header.b_size
-			# truncate the chain if required
-			chain = chain[0...(size.to_f / block_size).ceil] if size
-			# convert chain to ranges of the block size
-			ranges = chain.map { |i| [block_size * (i + 1), block_size] }
-			# truncate final range if required
-			ranges.last[1] -= (ranges.length * block_size - size) if ranges.last and size
-			io, ole = @io, self
-			class << ranges; self; end.send(:define_method, :to_io) { RangesIO.new io, self }
-			ranges
-		end
-
-		# As above, for +big_block_ranges+, but for small blocks.
-		#
-		# Small blocks are of size Ole::Storage::Header#s_size, and are stored
-		# as a single file, serialized using big blocks. Single blocks are
-		# mapped to big blocks using Ole::Storage#sb_blocks
-		def small_block_ranges chain, size=nil
-			block_size = @header.s_size
-			chain = chain[0...(size.to_f / block_size).ceil] if size
-			ranges = chain.map do |i|
-				# this tries to efficiently map a small block file to its position in the parent file.
-				idx, pos = (i * block_size).divmod @header.b_size
-				[pos + @header.b_size * (@sb_blocks[idx] + 1), block_size]
-			end
-			ranges.last[1] -= (ranges.length * block_size - size) if ranges.last and size
-			io = @io
-			class << ranges; self; end.send(:define_method, :to_io) { RangesIO.new io, self }
-			ranges
-		end
-
 		def bat_for_size size
 			size > @header.threshold ? @bbat : @sbat
 		end
@@ -591,14 +364,6 @@ destroy things.
 				true
 			end
 
-			def b_size
-				@b_size ||= 1 << b_shift
-			end
-
-			def s_size
-				@s_size ||= 1 << s_shift
-			end
-
 			MEMBERS.each_with_index do |sym, i|
 				define_method(sym) { @values[i] }
 				define_method(sym.to_s + '=') { |val| @values[i] = val }
@@ -646,17 +411,14 @@ destroy things.
 			BAT			 = 0xfffffffd
 			META_BAT = 0xfffffffc
 
-			attr_reader :ole, :table
-			def initialize ole, range_conv
+			attr_reader :ole, :io, :table, :block_size
+			def initialize ole
 				@ole = ole
 				@table = []
-				@range_conv = range_conv
 			end
 
-			def self.load ole, range_conv, chain
-				at = AllocationTable.new ole, range_conv
-				at.table.replace ole.big_block_ranges(chain).to_io.read.unpack('L*')
-				at
+			def load data
+				@table = data.unpack('L*')
 			end
 
 			def truncated_table
@@ -672,7 +434,7 @@ destroy things.
 			def save
 				table = truncated_table #@table
 				# pad it out some
-				num = @ole.header.b_size / 4
+				num = @ole.bbat.block_size / 4
 				# do you really use AVAIL? they probably extend past end of file, and may shortly
 				# be used for the bat. not really good.
 				table += [AVAIL] * (num - (table.length % num)) if (table.length % num) != 0
@@ -695,17 +457,45 @@ destroy things.
 			
 			def ranges chain, size=nil
 				chain = self.chain(chain) unless Array === chain
-				@ole.send @range_conv, chain, size
+				blocks_to_ranges chain, size
+			end
+
+		# Turn a chain (an array given by +chain+) of big blocks, optionally
+		# truncated to +size+, into an array of arrays describing the stretches of
+		# bytes in the file that it belongs to.
+		#
+		# Big blocks are of size Ole::Storage::Header#b_size, and are stored
+		# directly in the parent file.
+			# truncate the chain if required
+			# convert chain to ranges of the block size
+			# truncate final range if required
+
+			def blocks_to_ranges chain, size=nil
+				chain = chain[0...(size.to_f / block_size).ceil] if size
+				ranges = chain.map { |i| [block_size * i, block_size] }
+				ranges.last[1] -= (ranges.length * block_size - size) if ranges.last and size
+				ranges
+			end
+
+			# quick shortcut. chain can be either a head (in which case the table is used to
+			# turn it into a chain), or a chain. it is converted to ranges, then to rangesio.
+			# its not resizeable or migrateable. it probably could be resizeable though, using
+			# self as the bat. but what would the first_block be?
+			def open chain, size=nil
+				io = RangesIO.new @io, ranges(chain, size)
+				if block_given?
+					begin   yield io
+					ensure; io.close
+					end
+				else io
+				end
+			end
+
+			def read chain, size=nil
+				open chain, size, &:read
 			end
 
 			# ----------------------
-
-			# up till now allocationtable's didn't know their block size. not anymore...
-			# this should replace @range_conv
-			# maybe cleaner to have a SmallAllocationTable, and a BigAllocationTable??
-			def type
-				@range_conv.to_s[/^[^_]+/].to_sym
-			end
 
 			# the plus 2 is,
 			# 1 to get to the end of the block that starts at max_b, and the other due to the
@@ -753,25 +543,30 @@ destroy things.
 						# again next time around.
 						@table[last_block] = EOC
 					end
-					# for the growth case, we may now be bigger than the underlying file. that case
-					# is currently handled manually for big blocks elsewhere, but what about small blocks:
-					# need to re-size sbblocks
-					if type == :small
-						# the size of the small block file should be at least this big.
-						# its really a bit of a hack, to stand in for a truncate call on the underlying not
-						# doing the right thing as yet, because we optimized away the proper underlying
-						sb_blocks_size = (@table.reject { |b| b >= META_BAT }.max + 2) * block_size
-						root_first_block = @ole.bbat.resize_chain @ole.root.first_block, sb_blocks_size
-						@ole.sb_blocks.replace @ole.bbat.chain(root_first_block)
-						@ole.root.first_block = root_first_block
-					end
 					first_block
 				else first_block
 				end
 			end
 
-			def block_size
-				@ole.header.send type == :big ? :b_size : :s_size
+			class Big < AllocationTable
+				def initialize(*args)
+					super
+					@block_size = 1 << @ole.header.b_shift
+					@io = @ole.io
+				end
+
+				# Big blocks are kind of -1 based, in order to not clash with the header.
+				def blocks_to_ranges blocks, size
+					super blocks.map { |b| b + 1 }, size
+				end
+			end
+
+			class Small < AllocationTable
+				def initialize(*args)
+					super
+					@block_size = 1 << @ole.header.s_shift
+					@io = @ole.sb_file
+				end
 			end
 		end
 
@@ -789,7 +584,7 @@ destroy things.
 			def initialize io, bat, first_block, size=nil
 				@bat = bat
 				self.first_block = first_block
-				super(io, @bat.ranges(first_block, size))
+				super io, @bat.ranges(first_block, size)
 			end
 
 			def truncate size
@@ -817,7 +612,7 @@ destroy things.
 			attr_reader :dirent
 			def initialize io, dirent
 				@dirent = dirent
-				super(io, @dirent.ole.bat_for_size(@dirent.size), @dirent.first_block, @dirent.size)
+				super io, @dirent.ole.bat_for_size(@dirent.size), @dirent.first_block, @dirent.size
 			end
 
 			def truncate size
@@ -831,7 +626,7 @@ destroy things.
 					keep = read [@size, size].min
 					# this does a normal truncate to 0, removing our presence from the old bat, and
 					# rewrite the dirent's first_block
-					super(0)
+					super 0
 					@bat = bat
 					# important to do this now, before the write. as the below write will always
 					# migrate us back to sbat! this will now allocate us +size+ in the new bat.
@@ -890,6 +685,9 @@ destroy things.
 			# used in the next / prev / child stuff to show that the tree ends here.
 			# also used for first_block for directory.
 			EOT = 0xffffffff
+			# All +Dirent+ names are in UTF16, which we convert
+			FROM_UTF16 = Iconv.new 'utf-8', 'utf-16le'
+			TO_UTF16   = Iconv.new 'utf-16le', 'utf-8'
 
 			include Enumerable
 
@@ -926,7 +724,7 @@ destroy things.
 			def load ole, str
 				@ole = ole
 				@values = str.unpack PACK
-				@name = UTF16_TO_UTF8[name_utf16[0...name_len].sub(/\x00\x00$/, '')]
+				@name = FROM_UTF16.iconv name_utf16[0...name_len].sub(/\x00\x00$/, '')
 				@type = TYPE_MAP[type_id] or raise "unknown type #{type_id.inspect}"
 				if file?
 					@create_time = Types.load_time create_time_str
@@ -942,7 +740,7 @@ destroy things.
 			def open
 				return nil unless file?
 				bat = size > @ole.header.threshold ? @ole.bbat : @ole.sbat
-				io = RangesIOMigrateable.new @ole.io, self
+				io = RangesIOMigrateable.new bat.io, self
 				if block_given?
 					begin   yield io
 					ensure; io.close
@@ -976,17 +774,14 @@ destroy things.
 			end
 			
 			def [] idx
-				if Integer === idx
-					children[idx]
-				else
-					# path style look up.
-					# maybe take another arg to allow creation? or leave that to the filesystem
-					# add on. 
-					# not sure if '/' is a valid char in an Dirent#name, so no splitting etc at
-					# this level.
-					# also what about warning about multiple hits for the same name?
-					children.find { |child| idx === child.name }
-				end
+				return children[idx] if Integer === idx
+				# path style look up.
+				# maybe take another arg to allow creation? or leave that to the filesystem
+				# add on. 
+				# not sure if '/' is a valid char in an Dirent#name, so no splitting etc at
+				# this level.
+				# also what about warning about multiple hits for the same name?
+				children.find { |child| idx === child.name }
 			end
 
 			# solution for the above '/' thing for now.
@@ -1041,7 +836,7 @@ destroy things.
 
 			attr_accessor :name, :type
 			def save
-				tmp = Iconv.new('utf-16le', 'utf-8').iconv(name) + 0.chr * 2
+				tmp = TO_UTF16.iconv(name) + 0.chr * 2
 				tmp = tmp[0, 64] if tmp.length > 64
 				self.name_len = tmp.length
 				self.name_utf16 = tmp + 0.chr * (64 - tmp.length)

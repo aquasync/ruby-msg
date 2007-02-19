@@ -48,7 +48,7 @@ end
 
 # should test resizeable and migrateable IO.
 
-class TestStorage < Test::Unit::TestCase
+class TestStorageRead < Test::Unit::TestCase
 	def setup
 		@ole = Ole::Storage.open "#{TEST_DIR}/test_word_6.doc", 'rb'
 	end
@@ -94,4 +94,22 @@ class TestStorage < Test::Unit::TestCase
 		assert_equal hashes, @ole.root.children.map { |child| child.read.hash }
 	end
 end
+
+require 'digest/sha1'
+require 'stringio'
+
+class TestStorageWrite < Test::Unit::TestCase
+	# fixme
+	# don't really want to lock down the actual internal api's yet. this will just
+	# ensure for the time being that #flush continues to work properly. need a host
+	# of checks involving writes that resize their file bigger/smaller, that resize
+	# the bats to more blocks, that resizes the sb_blocks, that has migration etc.
+	def test_write_hash
+		io = StringIO.open File.read("#{TEST_DIR}/test_word_6.doc")
+		assert_equal '9974e354def8471225f548f82b8d81c701221af7', Digest::SHA1.hexdigest(io.string)
+		Ole::Storage.open(io) { }
+		assert_equal 'efa8cfaf833b30b1d1d9381771ddaafdfc95305c', Digest::SHA1.hexdigest(io.string)
+	end
+end
+
 

@@ -95,7 +95,7 @@ class Msg
 		# not really good though FIXME
 		ENCODINGS = {
 			0x000d =>   proc { |obj| obj }, # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually. in which case we shouldn't get here right?
-			0x001f =>   proc { |obj| Ole::Storage::UTF16_TO_UTF8[obj.read] }, # unicode
+			0x001f =>   proc { |obj| Ole::Storage::Dirent::FROM_UTF16.iconv obj.read }, # unicode
 			# ascii
 			# FIXME hack did a[0..-2] before, seems right sometimes, but for some others it chopped the text. chomp
 			0x001e =>   proc { |obj| a = obj.read; a[-1] == 0 ? a[0...-2] : a },
