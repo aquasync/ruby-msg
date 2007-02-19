@@ -74,6 +74,12 @@ module Ole # :nodoc:
 	#
 	# 1. tests. lock down how things work at the moment - mostly good.
 	# 2. lots of tidying up
+	#    - main FIXME's in this regard are:
+	#      * the custom header cruft for Header and Dirent needs some love.
+	#      * i have a number of classes doing load/save combos: Header, AllocationTable, Dirent,
+	#        and, in a manner of speaking, but arguably different, Storage itself.
+	#        they have differing api's which would be nice to clean.
+	#        AllocationTable::Big must be created aot now, as it is used for all subsequent reads.
 	# 3. need to fix META_BAT support in #flush.
 	# 4. maybe move io stuff to separate file
 	#
@@ -113,7 +119,17 @@ module Ole # :nodoc:
 				# first step though is to support modifying pre-existing and saving, then this
 				# missing gap will be fairly straight forward - essentially initialize to
 				# equivalent of loading an empty ole document.
-				raise NotImplementedError, 'unable to create new ole objects from scratch as yet'
+				#raise NotImplementedError, 'unable to create new ole objects from scratch as yet'
+				Log.warn 'creating new ole storage object on non-writable io' unless @writeable
+				@header = Header.new
+				@bbat = AllocationTable::Big.new self
+				@root = Dirent.new self, :root
+				@root.name = 'Root Entry'
+				@dirents = [@root]
+				@root.idx = 0
+				@root.children = []
+				@sb_file = RangesIOResizeable.new @io, @bbat, AllocationTable::EOC
+				@sbat = AllocationTable::Small.new self
 			else load
 			end
 		end
@@ -191,6 +207,8 @@ module Ole # :nodoc:
 		end
 
 		# should have a #open_dirent i think. and use it in load and flush. neater.
+		# also was thinking about Dirent#open_padding. then i can more easily clean up the padding
+		# to be 0.chr
 =begin
 thoughts on fixes:
 1. reterminate any chain not ending in EOC. 
@@ -232,25 +250,11 @@ destroy things.
 
 			# what follows will be slightly more complex for the bat fiddling.
 
-			# now lets write out the bbat. the bbat's chain is not part of the bbat. but maybe i
-			# should add blocks to the bbat to hold it.
-			# firstly, create the bbat chain's actual chain data:
-			# the size of bbat_data is equal to the
-			#   bbat_data_size = ((number_of_normal_blocks + number_of_extra_bat_blocks) * 4 /
-			#			block_size.to_f).ceil * block_size
-			# saving it will require
-			#   num_bbat_blocks = (bbat_data_size / block_size.to_f).ceil
-			#   numer_of_extra_bat_blocks = num_bbat_blocks + num_mbat_blocks
-			# which will then get added to number of blocks in the above, until it stabilises.
-			# note that any existing free blocks can be used. this is the way to go, in order to
-			# have the BAT properly appearing in the allocation table.
-			# i just thought of the easiest way to do this:
 			# create RangesIOResizeable hooked up to the bbat. use that to claim bbat blocks using
 			# truncate. then when its time to write, convert that chain and some chunk of blocks at
 			# the end, into META_BAT blocks. write out the chain, and those meta bat blocks, and its
 			# done.
 
-			#p @bbat
 			@bbat.table.map! do |b|
 				b == AllocationTable::BAT || b == AllocationTable::META_BAT ?
 					AllocationTable::AVAIL : b
@@ -297,6 +301,9 @@ destroy things.
 			@header.num_mbat = (other_mbat_data.length / new_bbat.block_size.to_f).ceil
 			io.write other_mbat_data
 =end
+
+			# FIXME: missing a number of updates to header values!
+
 			# now seek back and write the header out
 			@io.seek 0
 			@io.write @header.save + mbat_chain.pack('L*')
@@ -327,11 +334,11 @@ destroy things.
 			# 2 basic initializations, from scratch, or from a data string.
 			# from scratch will be geared towards creating a new ole object
 			def initialize
-				@values = []
+				@values = [ MAGIC, 0.chr * 16, 59, 3, "\xfe\xff", 9, 6, 0.chr * 6, 0, 0, 0, 0.chr * 4, 4096, 0, 0, 0, 0]
 			end
 
 			def self.load str
-				h = Header.new
+				h = Header.allocate
 				h.to_a.replace str.unpack(PACK)
 				h.validate!
 				h
@@ -502,6 +509,7 @@ destroy things.
 			# `+ 1' in both range conversions (blocks are essentially indexed with -1 base, -1
 			# corresponding to header bytes).
 			# returns the size of the underlying object necessary to store all of our normal blocks
+			# no longer used:
 			def data_size
 				#(@table.reject { |b| b >= META_BAT }.max + 2) * block_size
 				(truncated_table.length + 1) * block_size
