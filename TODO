@@ -8,6 +8,8 @@
 - http://rubyforge.org/projects/rubymail/, and
 - http://rubyforge.org/projects/mime-alt-lite/
 
+**** fix nameid handling for sub Properties objects. needs to inherit top-level
+
 both haven't been touched in 2 years though.
 
 = Ole

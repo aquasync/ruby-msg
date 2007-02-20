@@ -322,7 +322,7 @@ class Msg
 					class << @embedded_ole
 						def compobj
 							return nil unless compobj = self["\001CompObj"]
-							compobj.io.read[/^.{32}([^\x00]+)/m, 1]
+							compobj.read[/^.{32}([^\x00]+)/m, 1]
 						end
 
 						def embedded_type
@@ -376,7 +376,21 @@ class Msg
 			# perhaps it was a data object not correctly handled?
 			# hmmm, have to use read here. that assumes that the data isa stream.
 			# but if the attachment data is a string, then it won't work. possible?
-			mime.body.replace Base64.encode64(data.read.to_s).gsub(/\n/, "\r\n")
+			data_str = if @embedded_msg
+				mime.headers['Content-Type'] = 'message/rfc822'
+				@embedded_msg.to_mime.to_s
+			elsif @embedded_ole
+				# kind of hacky
+				io = StringIO.new
+				Ole::Storage.new io do |ole|
+					ole.root.type = :dir
+					Ole::Storage::Dirent.copy @embedded_ole, ole.root
+				end
+				io.string
+			else
+				data.read.to_s
+			end
+			mime.body.replace Base64.encode64(data_str).gsub(/\n/, "\r\n")
 			mime
 		end
 

@@ -110,6 +110,12 @@ class TestStorageWrite < Test::Unit::TestCase
 		Ole::Storage.open(io) { }
 		assert_equal 'efa8cfaf833b30b1d1d9381771ddaafdfc95305c', Digest::SHA1.hexdigest(io.string)
 	end
+
+	def test_create_from_scratch_hash
+		io = StringIO.new
+		Ole::Storage.new(io) { }
+		assert_equal '6bb9d6c1cdf1656375e30991948d70c5fff63d57', Digest::SHA1.hexdigest(io.string)
+	end
 end
 
 

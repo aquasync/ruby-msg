@@ -73,6 +73,13 @@ module Ole # :nodoc:
 	# = TODO
 	#
 	# 1. tests. lock down how things work at the moment - mostly good.
+	#    create from scratch works now, as does copying in a subtree of another doc, so
+	#    ole embedded attachment serialization works now. i can save embedded xls in an msg
+	#    into a separate file, and open it. this was a goal. now i would want to implemenet
+	#    to_mime conversion for embedded attachments, that serializes them to ole, but handles
+	#    some separately like various meta file types as plain .wmf attachments perhaps. this
+	#    will give pretty good .eml's from emails with embedded attachments.
+	#    the other todo is .rtf output, with full support for embedded ole objects...
 	# 2. lots of tidying up
 	#    - main FIXME's in this regard are:
 	#      * the custom header cruft for Header and Dirent needs some love.
@@ -81,7 +88,6 @@ module Ole # :nodoc:
 	#        they have differing api's which would be nice to clean.
 	#        AllocationTable::Big must be created aot now, as it is used for all subsequent reads.
 	# 3. need to fix META_BAT support in #flush.
-	# 4. maybe move io stuff to separate file
 	#
 
 	class Storage
@@ -115,7 +121,7 @@ module Ole # :nodoc:
 				false
 			end
 			# if the io object has data, we should load it, otherwise start afresh
-			if !@io.size
+			if @io.size == 0
 				# first step though is to support modifying pre-existing and saving, then this
 				# missing gap will be fairly straight forward - essentially initialize to
 				# equivalent of loading an empty ole document.
@@ -128,7 +134,9 @@ module Ole # :nodoc:
 				@dirents = [@root]
 				@root.idx = 0
 				@root.children = []
-				@sb_file = RangesIOResizeable.new @io, @bbat, AllocationTable::EOC
+				# size shouldn't display for non-files
+				@root.size = 0
+				@sb_file = RangesIOResizeable.new @bbat, AllocationTable::EOC
 				@sbat = AllocationTable::Small.new self
 			else load
 			end
@@ -195,7 +203,7 @@ module Ole # :nodoc:
 
 			# FIXME i don't currently use @header.num_sbat which i should
 			# hmm. nor do i write it. it means what exactly again?
-			@sb_file = RangesIOResizeable.new @io, @bbat, @root.first_block
+			@sb_file = RangesIOResizeable.new @bbat, @root.first_block, @root.size
 			@sbat = AllocationTable::Small.new self
 			@sbat.load @bbat.read(@header.sbat_start)
 		end
@@ -226,13 +234,14 @@ destroy things.
 			# for now.
 			@root.name = 'Root Entry'
 			@root.first_block = @sb_file.first_block
+			@root.size = @sb_file.size
 			@dirents = @root.flatten
 			#dirs, files = @dirents.partition(&:dir?)
 			#big_files, small_files = files.partition { |file| file.size > @header.threshold }
 
 			# maybe i should move the block form up to RangesIO, and get it for free at all levels.
 			# Dirent#open gets block form for free then
-			io = RangesIOResizeable.new @io, @bbat, @header.dirent_start
+			io = RangesIOResizeable.new @bbat, @header.dirent_start
 			io.truncate 0
 			@dirents.each { |dirent| io.write dirent.save }
 			padding = (io.size / @bbat.block_size.to_f).ceil * @bbat.block_size - io.size
@@ -242,10 +251,11 @@ destroy things.
 			io.close
 
 			# similarly for the sbat data.
-			io = RangesIOResizeable.new @io, @bbat, @header.sbat_start
+			io = RangesIOResizeable.new @bbat, @header.sbat_start
 			io.truncate 0
 			io.write @sbat.save
 			@header.sbat_start = io.first_block
+			@header.num_sbat = @bbat.chain(@header.sbat_start).length
 			io.close
 
 			# what follows will be slightly more complex for the bat fiddling.
@@ -259,7 +269,7 @@ destroy things.
 				b == AllocationTable::BAT || b == AllocationTable::META_BAT ?
 					AllocationTable::AVAIL : b
 			end
-			io = RangesIOResizeable.new @io, @bbat, AllocationTable::EOC
+			io = RangesIOResizeable.new @bbat, AllocationTable::EOC
 			# use crappy loop for now:
 			while true
 				bbat_data = @bbat.save
@@ -277,6 +287,7 @@ destroy things.
 			mbat_chain = @bbat.chain io.first_block
 			io.close
 			mbat_chain.each { |b| @bbat.table[b] = AllocationTable::BAT }
+			@header.num_bat = mbat_chain.length
 			#p @bbat.truncated_table
 			#p ranges
 			#p mbat_chain
@@ -285,6 +296,8 @@ destroy things.
 			io.write @bbat.save
 			io.close
 			mbat_chain += [AllocationTable::AVAIL] * (109 - mbat_chain.length)
+			@header.mbat_start = AllocationTable::EOC
+			@header.num_mbat = 0
 
 =begin
 			bbat_data = new_bbat.save
@@ -311,7 +324,8 @@ destroy things.
 		end
 
 		def bat_for_size size
-			size > @header.threshold ? @bbat : @sbat
+			# note >=, not > previously.
+			size >= @header.threshold ? @bbat : @sbat
 		end
 
 		def inspect
@@ -319,33 +333,38 @@ destroy things.
 		end
 
 		# A class which wraps the ole header
-		class Header
-			MEMBERS = [
+		class Header < Struct.new(
 				:magic, :clsid, :minor_ver, :major_ver, :byte_order, :b_shift, :s_shift,
 				:reserved, :csectdir, :num_bat, :dirent_start, :transacting_signature, :threshold,
 				:sbat_start, :num_sbat, :mbat_start, :num_mbat
-			]
+			)
 			PACK = 'a8 a16 S2 a2 S2 a6 L3 a4 L5'
 			SIZE = 0x4c
 			# i have seen it pointed out that the first 4 bytes of hex,
 			# 0xd0cf11e0, is supposed to spell out docfile. hmmm :)
 			MAGIC = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # expected value of Header#magic
+			# what you get if creating new header from scratch.
+			# AllocationTable::EOC isn't available yet. meh.
+			EOC = 0xfffffffe
+			DEFAULT = [
+				MAGIC, 0.chr * 16, 59, 3, "\xfe\xff", 9, 6,
+				0.chr * 6, 0, 1, EOC, 0.chr * 4,
+				4096, EOC, 0, EOC, 0
+			]
 
 			# 2 basic initializations, from scratch, or from a data string.
 			# from scratch will be geared towards creating a new ole object
-			def initialize
-				@values = [ MAGIC, 0.chr * 16, 59, 3, "\xfe\xff", 9, 6, 0.chr * 6, 0, 0, 0, 0.chr * 4, 4096, 0, 0, 0, 0]
+			def initialize *values
+				super(*(values.empty? ? DEFAULT : values))
+				validate!
 			end
 
 			def self.load str
-				h = Header.allocate
-				h.to_a.replace str.unpack(PACK)
-				h.validate!
-				h
+				Header.new(*str.unpack(PACK))
 			end
 
 			def save
-				@values.pack PACK
+				to_a.pack PACK
 			end
 
 			def validate!
@@ -365,25 +384,11 @@ destroy things.
 				# 3 for this value. 
 				# transacting_signature != "\x00" * 4 or
 				if threshold != 4096 or
+					 num_mbat == 0 && mbat_start != AllocationTable::EOC or
 					 reserved != "\x00" * 6
 					Log.warn "may not be a valid OLE2 structured storage file"
 				end
 				true
-			end
-
-			MEMBERS.each_with_index do |sym, i|
-				define_method(sym) { @values[i] }
-				define_method(sym.to_s + '=') { |val| @values[i] = val }
-			end
-
-			def to_a
-				@values
-			end
-
-			def inspect
-				"#<#{self.class} " +
-					MEMBERS.zip(@values).map { |k, v| "#{k}=#{v.inspect}" }.join(" ") +
-					">"
 			end
 		end
 
@@ -589,10 +594,10 @@ destroy things.
 		class RangesIOResizeable < RangesIO
 			attr_reader   :bat
 			attr_accessor :first_block
-			def initialize io, bat, first_block, size=nil
+			def initialize bat, first_block, size=nil
 				@bat = bat
 				self.first_block = first_block
-				super io, @bat.ranges(first_block, size)
+				super @bat.io, @bat.ranges(first_block, size)
 			end
 
 			def truncate size
@@ -618,9 +623,9 @@ destroy things.
 		# on close.
 		class RangesIOMigrateable < RangesIOResizeable
 			attr_reader :dirent
-			def initialize io, dirent
+			def initialize dirent
 				@dirent = dirent
-				super io, @dirent.ole.bat_for_size(@dirent.size), @dirent.first_block, @dirent.size
+				super @dirent.ole.bat_for_size(@dirent.size), @dirent.first_block, @dirent.size
 			end
 
 			def truncate size
@@ -636,6 +641,8 @@ destroy things.
 					# rewrite the dirent's first_block
 					super 0
 					@bat = bat
+					# just change the underlying io from right under everyone :)
+					@io = bat.io
 					# important to do this now, before the write. as the below write will always
 					# migrate us back to sbat! this will now allocate us +size+ in the new bat.
 					super
@@ -712,10 +719,15 @@ destroy things.
 			def initialize ole, type
 				@ole = ole
 				# this isn't really good enough. need default values put in there.
-				@values = []
+				@values = [
+					0.chr * 2, 2, 0, # will get overwritten
+					1, EOT, EOT, EOT,
+					0.chr * 16, 0, nil, nil,
+					AllocationTable::EOC, 0, 0.chr * 4]
 				# maybe check types here. 
 				@type = type
 				@create_time = @modify_time = nil
+				@children = []
 				if file?
 					@create_time = Time.now
 					@modify_time = Time.now
@@ -747,8 +759,7 @@ destroy things.
 			# maybe take a mode string argument, and do truncation, append etc stuff.
 			def open
 				return nil unless file?
-				bat = size > @ole.header.threshold ? @ole.bbat : @ole.sbat
-				io = RangesIOMigrateable.new bat.io, self
+				io = RangesIOMigrateable.new self
 				if block_given?
 					begin   yield io
 					ensure; io.close
@@ -844,8 +855,9 @@ destroy things.
 
 			attr_accessor :name, :type
 			def save
-				tmp = TO_UTF16.iconv(name) + 0.chr * 2
-				tmp = tmp[0, 64] if tmp.length > 64
+				tmp = TO_UTF16.iconv(name)
+				tmp = tmp[0, 62] if tmp.length > 62
+				tmp += 0.chr * 2
 				self.name_len = tmp.length
 				self.name_utf16 = tmp + 0.chr * (64 - tmp.length)
 				begin
@@ -867,15 +879,18 @@ destroy things.
 			end
 
 			def inspect
+				str = "#<Dirent:#{name.inspect}"
 				# perhaps i should remove the data snippet. its not that useful anymore.
-				data = if file?
+				if file?
 					tmp = read 9
-					tmp.length == 9 ? tmp[0, 5] + '...' : tmp
+					data = tmp.length == 9 ? tmp[0, 5] + '...' : tmp
+					str << " size=#{size}" +
+						"#{time ? ' time=' + time.to_s.inspect : nil}" +
+						" data=#{data.inspect}"
+				else
+					# there is some dir specific stuff. like clsid, flags.
 				end
-				"#<Dirent:#{name.inspect} size=#{size}" +
-					"#{time ? ' time=' + time.to_s.inspect : nil}" +
-					"#{data ? ' data=' + data.inspect : nil}" +
-					">"
+				str + '>'
 			end
 
 			# --------
@@ -897,16 +912,16 @@ destroy things.
 
 			def self.copy src, dst
 				# copies the contents of src to dst. must be the same type. this will throw an
-				# error on copying to root. 
+				# error on copying to root. maybe this will recurse too much for big documents??
 				raise unless src.type == dst.type
-				src.name = dst.name
+				dst.name = src.name
 				if src.dir?
 					src.children.each do |src_child|
-						dst.new_child src_child.type { |dst_child| Dirent.copy src_child, dst_child }
+						dst.new_child(src_child.type) { |dst_child| Dirent.copy src_child, dst_child }
 					end
 				else
 					src.open do |src_io|
-						dst.open dst_child.type { |dst_io| IO.copy src_io, dst_io }
+						dst.open { |dst_io| IO.copy src_io, dst_io }
 					end
 				end
 			end

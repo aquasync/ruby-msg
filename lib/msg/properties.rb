@@ -213,7 +213,7 @@ class Msg
 				prop = if named
 					str_off = *str.unpack('L')
 					len = *names_data[str_off, 4].unpack('L')
-					Ole::Storage::UTF16_TO_UTF8[names_data[str_off + 4, len]]
+					Ole::Storage::Dirent::FROM_UTF16.iconv names_data[str_off + 4, len]
 				else
 					a, b = str.unpack('S2')
 					Log.debug "b not 0" if b != 0
@@ -302,7 +302,9 @@ class Msg
 		def add_property key, value, pos=nil
 			# map keys in the named property range through nameid
 			if Integer === key and key >= 0x8000
-				if real_key = @nameid[key]
+				if !@nameid
+					Log.warn "no nameid section yet named properties used"
+				elsif real_key = @nameid[key]
 					key = real_key
 				else
 					Log.warn "property in named range not in nameid #{key.inspect}"
