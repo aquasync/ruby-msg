@@ -76,22 +76,6 @@ class Msg
 
 	# copy data from msg properties storage to standard mime. headers
 	def populate_headers
-		# for all of this stuff, i'm assigning in utf8 strings.
-		# thats ok i suppose, maybe i can say its the job of the mime class to handle that.
-		# but a lot of the headers are overloaded in different ways. plain string, many strings
-		# other stuff. what happens to a person who has a " in their name etc etc. encoded words
-		# i suppose. but that then happens before assignment. and can't be automatically undone
-		# until the header is decomposed into recipients.
-		for type, recips in recipients.group_by { |r| r.type }
-			# don't know why i bother, but if we can, we try to sort recipients by the numerical part
-			# of the ole name, or just leave it if we can't
-			recips = (recips.sort_by { |r| r.obj.name[/\d{8}$/].hex } rescue recips)
-			# are you supposed to use ; or , to separate?
-			# recips.empty? is strange. i wouldn't have thought it possible, but it was right?
-			headers[type.to_s.sub(/^(.)/) { $1.upcase }] = [recips.join('; ')] unless recips.empty?
-		end
-		headers['Subject'] = [props.subject] if props.subject
-
 		# construct a From value
 		# should this kind of thing only be done when headers don't exist already? maybe not. if its
 		# sent, then modified and saved, the headers could be wrong?
@@ -125,6 +109,25 @@ class Msg
 			end
 		# else we leave the transport message header version
 		end
+
+		# for all of this stuff, i'm assigning in utf8 strings.
+		# thats ok i suppose, maybe i can say its the job of the mime class to handle that.
+		# but a lot of the headers are overloaded in different ways. plain string, many strings
+		# other stuff. what happens to a person who has a " in their name etc etc. encoded words
+		# i suppose. but that then happens before assignment. and can't be automatically undone
+		# until the header is decomposed into recipients.
+		recips_by_type = recipients.group_by { |r| r.type }
+		# i want to the the types in a specific order.
+		[:to, :cc, :bcc].each do |type|
+			# don't know why i bother, but if we can, we try to sort recipients by the numerical part
+			# of the ole name, or just leave it if we can't
+			recips = recips_by_type[type]
+			recips = (recips.sort_by { |r| r.obj.name[/\d{8}$/].hex } rescue recips)
+			# are you supposed to use ; or , to separate?
+			# recips.empty? is strange. i wouldn't have thought it possible, but it was right?
+			headers[type.to_s.sub(/^(.)/) { $1.upcase }] = [recips.join('; ')] unless recips.empty?
+		end
+		headers['Subject'] = [props.subject] if props.subject
 
 		# fill in a date value. by default, we won't mess with existing value hear
 		if headers['Date'].empty?
