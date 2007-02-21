@@ -1,17 +1,3 @@
-= Low hanging fruit
-
-* some quick adjustments to Msg / Mime to allow optional use of OrderedHash
-  for the headers, to allow order to be preserved.
-* test cases for msg/properties.rb msg/rtf.rb and mime.rb
-* regarding the mime fix ups. check out:
-
-- http://rubyforge.org/projects/rubymail/, and
-- http://rubyforge.org/projects/mime-alt-lite/
-
-**** fix nameid handling for sub Properties objects. needs to inherit top-level
-
-both haven't been touched in 2 years though.
-
 = Ole
 
 * support for shrinking the bats. sbat and bbat can grow to accomodate more data,
@@ -50,10 +36,36 @@ both haven't been touched in 2 years though.
 
 * then test & cleanup.
 
-= Newer
+= Newer Msg
+
+* fix nameid handling for sub Properties objects. needs to inherit top-level @nameid.
+
+* better handling for "Untitled Attachments", or attachments with no filename at all.
+  maybe better handling in general for attached messages. maybe re-write filename with
+	subject.
+
+* better handling for other types of embedded ole attachments. try to recognise .wmf to
+	start with. etc. 2 goals, form .eml, and for .rtf output.
+
+* rtf to text support, initially. just simple strip all the crap out approach. maybe html
+	later on. sometimes the only body is rtf, which is problematic. is rtf an allowed body
+	type?
+
+* better encoding support (i'm thinking, check some things like m-dash in the non-wide
+	string type. is it windows codepage?. how to know code page in general? change
+	ENCODER[] to convert these to utf8 i think). I'm trying to just move everything to utf8.
+	then i need to make sure the mime side of that holds up.
 
 * certain parsing still not correct, especially small properties directory, 
   things like bools, multiavlue shorts etc.
+
+* test cases for msg/properties.rb msg/rtf.rb and mime.rb
+* regarding the mime fix ups. check out:
+
+- http://rubyforge.org/projects/rubymail/, and
+- http://rubyforge.org/projects/mime-alt-lite/
+
+both haven't been touched in 2 years though.
 
 * get some sort of working From: header
   there doesn't appear to be a way to get an smtp address for the sender in an
@@ -97,7 +109,7 @@ PS_ROUTING_ENTRYID
 unknown property 5ff6
  * appears to be equal to display_name, and transmitable_display_name
 unknown property 5ff7
- * recipient.properties.raw['5ff7'].upcase == recipient.properties.entryid
+ * recipient.properties[0x5ff7].upcase == recipient.properties.entryid
    is equivalent, but not all uppercase.
 	 everything else is upper though. maybe a displayname kind of thing.
 * common relationship
@@ -138,15 +150,6 @@ http://blogs.msdn.com/stephen_griffin/archive/2005/10/25/484656.aspx
 		sender_name:
 - fill out some of the tag holes. mostly done
 - properly integrate rtf decompression, and the html conversion from rtf
-- preliminary mime conversion. mostly done. currently relies on transport_message_headers.
-  need to also support internal mail, where we write all those headers ourselves instead,
-	from the msg.props.
-	like
-	mime.headers['Subject'] = [msg.props.subject]
-	...
-	etc, for heaps of things, like Thread-ID, Message-ID, basics like From, To, CC etc etc.
-	a more advanced possibility is some kind of smart merge, taking information superset, but
-	i think i'll keep it simple for now.
 - figure out some things, like entryids, and the properties directories,
   and the ntsecurity data 0e27.
 	http://peach.ease.lsoft.com/scripts/wa.exe?A2=ind0207&L=mapi-l&P=24515

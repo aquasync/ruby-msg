@@ -304,6 +304,7 @@ class Msg
 			if Integer === key and key >= 0x8000
 				if !@nameid
 					Log.warn "no nameid section yet named properties used"
+					key = Key.new key
 				elsif real_key = @nameid[key]
 					key = real_key
 				else
@@ -401,9 +402,29 @@ class Msg
 
 		# -----
 		
-		# temporary pseudo tag.
+		# temporary pseudo tags
+		
+		# for providing rtf to plain text conversion
+		def body
+			return @body if @body != nil
+			@body = (self[:body] rescue false)
+			@body = (::RTF::Converter.rtf2text body_rtf rescue false) if !@body or @body.strip.empty?
+			@body
+		end
+
+		# for providing rtf decompression
 		def body_rtf
-			@body_rtf ||= (RTF.rtfdecompr rtf_compressed rescue nil)
+			@body_rtf ||= (RTF.rtfdecompr rtf_compressed.read rescue nil)
+		end
+
+		# for providing rtf to html conversion
+		def body_html
+			return @body_html if @body_html != nil
+			@body_html = (self[:body_html].read rescue false)
+			@body_html = (Msg::RTF.rtf2html body_rtf rescue false) if !@body_html or @body_html.strip.empty?
+			# last resort
+			@body_html = (::RTF::Converter.rtf2text body_rtf, :html rescue false) if !@body_html or @body_html.strip.empty?
+			@body_html
 		end
 
 		# +Properties+ are accessed by <tt>Key</tt>s, which are coerced to this class.

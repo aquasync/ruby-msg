@@ -1,6 +1,8 @@
 require 'stringio'
 require 'strscan'
 
+require 'rtf.rb'
+
 class Msg
 	#
 	# = Introduction
@@ -194,7 +196,7 @@ void decodertfhtml(char *buf,unsigned int *len)
 				if scan.scan /\{/
 				elsif scan.scan /\}/
 				elsif scan.scan /\\\*\\htmltag(\d+) ?/
-					p scan[1]
+					#p scan[1]
 					if ignore_tag == scan[1]
 						scan.scan_until /\}/
 						ignore_tag = nil
@@ -225,7 +227,7 @@ void decodertfhtml(char *buf,unsigned int *len)
 					p :wtf
 				end
 			end
-			html
+			html.strip.empty? ? nil : html
 		end
 
 		module_function :rtf2html, :rtfdecompr
