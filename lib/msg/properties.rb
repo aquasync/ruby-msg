@@ -136,6 +136,8 @@ class Msg
 		def initialize
 			@raw = {}
 			@unused = []
+			# FIXME
+			@body_rtf = @body_html = @body = false
 		end
 
 		#--
@@ -404,26 +406,27 @@ class Msg
 		
 		# temporary pseudo tags
 		
-		# for providing rtf to plain text conversion
+		# for providing rtf to plain text conversion. later, html to text too.
 		def body
-			return @body if @body != nil
-			@body = (self[:body] rescue false)
-			@body = (::RTF::Converter.rtf2text body_rtf rescue false) if !@body or @body.strip.empty?
+			return @body if @body != false
+			@body = (self[:body] rescue nil)
+			@body = (::RTF::Converter.rtf2text body_rtf rescue nil) if !@body or @body.strip.empty?
 			@body
 		end
 
 		# for providing rtf decompression
 		def body_rtf
-			@body_rtf ||= (RTF.rtfdecompr rtf_compressed.read rescue nil)
+			return @body_rtf if @body_rtf != false
+			@body_rtf = (RTF.rtfdecompr rtf_compressed.read rescue nil)
 		end
 
 		# for providing rtf to html conversion
 		def body_html
-			return @body_html if @body_html != nil
-			@body_html = (self[:body_html].read rescue false)
-			@body_html = (Msg::RTF.rtf2html body_rtf rescue false) if !@body_html or @body_html.strip.empty?
+			return @body_html if @body_html != false
+			@body_html = (self[:body_html].read rescue nil)
+			@body_html = (Msg::RTF.rtf2html body_rtf rescue nil) if !@body_html or @body_html.strip.empty?
 			# last resort
-			@body_html = (::RTF::Converter.rtf2text body_rtf, :html rescue false) if !@body_html or @body_html.strip.empty?
+			@body_html = (::RTF::Converter.rtf2text body_rtf, :html rescue nil) if !@body_html or @body_html.strip.empty?
 			@body_html
 		end
 

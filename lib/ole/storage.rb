@@ -6,36 +6,15 @@ require 'iconv'
 require 'date'
 require 'support'
 
+require 'stringio'
+require 'tempfile'
+
+require 'ole/base'
+require 'ole/types'
 # not strictly ole related
 require 'ole/io_helpers'
 
 module Ole # :nodoc:
-	Log = Logger.new_with_callstack
-
-	# FIXME
-	module Types
-		# Parse two 32 bit time values into a DateTime
-		# Time is stored as a high and low 32 bit value, comprising the
-		# 100's of nanoseconds since 1st january 1601 (Epoch).
-		# struct FILETIME. see eg http://msdn2.microsoft.com/en-us/library/ms724284.aspx
-		def self.load_time str
-			low, high = str.unpack 'L2'
-			time = EPOCH + (high * (1 << 32) + low) * 1e-7 / 86400 rescue return
-			# extra sanity check...
-			unless (1800...2100) === time.year
-				Log.warn "ignoring unlikely time value #{time.to_s}"
-				return nil
-			end
-			time
-		end
-
-		# turn a binary guid into something displayable.
-		# this will probably become a proper class later
-		def self.load_guid str
-			"{%08x-%04x-%04x-%02x%02x-#{'%02x' * 6}}" % str.unpack('L S S CC C6')
-		end
-	end
-
 	# 
 	# = Introduction
 	#
@@ -53,9 +32,11 @@ module Ole # :nodoc:
 	# Usage should be fairly straight forward:
 	#
 	#   # get the parent ole storage object
-	#   ole = Ole::Storage.open 'myfile.msg'
-	#   # => #<Ole::Storage io=#<File:myfile.msg> root=#<Dirent:"Root Entry"
-	#          size=2816>>
+	#   ole = Ole::Storage.open 'myfile.msg', 'r+'
+	#   # => #<Ole::Storage io=#<File:myfile.msg> root=#<Dirent:"Root Entry">>
+	#   # read some data
+	#   ole.root[1].read 4
+	#   # => "\001\000\376\377"
 	#   # get the top level root object and output a tree structure for
 	#   # debugging
 	#   puts ole.root.to_tree
@@ -69,6 +50,10 @@ module Ole # :nodoc:
 	#     \- #<Dirent:"__recip_version1.0_#00000000" size=0 time="2006-11-03T00:52:53Z">
 	#        |- #<Dirent:"__substg1.0_0FF60102" size=4 data="AAAAAA==">
 	#   	 ...
+	#   # write some data, and finish up (note that open is 'r+', so this overwrites
+	#   # but doesn't truncate
+	#   ole.root["\001CompObj"].open { |f| f.write "blah blah" }
+	#   ole.close
 	#
 	# = TODO
 	#
@@ -87,9 +72,9 @@ module Ole # :nodoc:
 	#        and, in a manner of speaking, but arguably different, Storage itself.
 	#        they have differing api's which would be nice to clean.
 	#        AllocationTable::Big must be created aot now, as it is used for all subsequent reads.
+	#     * ole types need work, can't serialize datetime at the moment.
 	# 3. need to fix META_BAT support in #flush.
 	#
-
 	class Storage
 		VERSION = '1.1.1'
 
@@ -120,25 +105,11 @@ module Ole # :nodoc:
 			rescue IOError
 				false
 			end
+			# silence undefined warning in clear
+			@sb_file = nil
 			# if the io object has data, we should load it, otherwise start afresh
-			if @io.size == 0
-				# first step though is to support modifying pre-existing and saving, then this
-				# missing gap will be fairly straight forward - essentially initialize to
-				# equivalent of loading an empty ole document.
-				#raise NotImplementedError, 'unable to create new ole objects from scratch as yet'
-				Log.warn 'creating new ole storage object on non-writable io' unless @writeable
-				@header = Header.new
-				@bbat = AllocationTable::Big.new self
-				@root = Dirent.new self, :root
-				@root.name = 'Root Entry'
-				@dirents = [@root]
-				@root.idx = 0
-				@root.children = []
-				# size shouldn't display for non-files
-				@root.size = 0
-				@sb_file = RangesIOResizeable.new @bbat, AllocationTable::EOC
-				@sbat = AllocationTable::Small.new self
-			else load
+			if @io.size > 0; load
+			else clear
 			end
 		end
 
@@ -315,12 +286,53 @@ destroy things.
 			io.write other_mbat_data
 =end
 
-			# FIXME: missing a number of updates to header values!
+			@root.type = :dir
 
 			# now seek back and write the header out
 			@io.seek 0
 			@io.write @header.save + mbat_chain.pack('L*')
 			@io.flush
+		end
+
+		def clear
+			# first step though is to support modifying pre-existing and saving, then this
+			# missing gap will be fairly straight forward - essentially initialize to
+			# equivalent of loading an empty ole document.
+			#raise NotImplementedError, 'unable to create new ole objects from scratch as yet'
+			Log.warn 'creating new ole storage object on non-writable io' unless @writeable
+			@header = Header.new
+			@bbat = AllocationTable::Big.new self
+			@root = Dirent.new self, :dir
+			@root.name = 'Root Entry'
+			@dirents = [@root]
+			@root.idx = 0
+			@root.children = []
+			# size shouldn't display for non-files
+			@root.size = 0
+			@sb_file.close if @sb_file
+			@sb_file = RangesIOResizeable.new @bbat, AllocationTable::EOC
+			@sbat = AllocationTable::Small.new self
+			# throw everything else the hell away
+			@io.truncate 0
+		end
+
+		# could be useful with mis-behaving ole documents. or to just clean them up.
+		def repack temp=:file
+			case temp
+			when :file; Tempfile.open 'w+', &method(:repack_using_io)
+			when :mem;  StringIO.open(&method(:repack_using_io))
+			else raise "unknown temp backing #{temp.inspect}"
+			end
+		end
+
+		def repack_using_io temp_io
+			@io.rewind
+			IO.copy @io, temp_io
+			clear
+			Storage.open temp_io do |temp_ole|
+				temp_ole.root.type = :dir
+				Dirent.copy temp_ole.root, root
+			end
 		end
 
 		def bat_for_size size
@@ -508,17 +520,6 @@ destroy things.
 			end
 
 			# ----------------------
-
-			# the plus 2 is,
-			# 1 to get to the end of the block that starts at max_b, and the other due to the
-			# `+ 1' in both range conversions (blocks are essentially indexed with -1 base, -1
-			# corresponding to header bytes).
-			# returns the size of the underlying object necessary to store all of our normal blocks
-			# no longer used:
-			def data_size
-				#(@table.reject { |b| b >= META_BAT }.max + 2) * block_size
-				(truncated_table.length + 1) * block_size
-			end
 
 			def get_free_block
 				@table.each_index { |i| return i if @table[i] == AVAIL }

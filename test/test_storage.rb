@@ -99,6 +99,10 @@ require 'digest/sha1'
 require 'stringio'
 
 class TestStorageWrite < Test::Unit::TestCase
+	def sha1 str
+		Digest::SHA1.hexdigest str
+	end
+
 	# fixme
 	# don't really want to lock down the actual internal api's yet. this will just
 	# ensure for the time being that #flush continues to work properly. need a host
@@ -106,15 +110,29 @@ class TestStorageWrite < Test::Unit::TestCase
 	# the bats to more blocks, that resizes the sb_blocks, that has migration etc.
 	def test_write_hash
 		io = StringIO.open File.read("#{TEST_DIR}/test_word_6.doc")
-		assert_equal '9974e354def8471225f548f82b8d81c701221af7', Digest::SHA1.hexdigest(io.string)
+		assert_equal '9974e354def8471225f548f82b8d81c701221af7', sha1(io.string)
 		Ole::Storage.open(io) { }
-		assert_equal 'efa8cfaf833b30b1d1d9381771ddaafdfc95305c', Digest::SHA1.hexdigest(io.string)
+		assert_equal 'efa8cfaf833b30b1d1d9381771ddaafdfc95305c', sha1(io.string)
+		# add a repack test here
+		Ole::Storage.open io, &:repack
+		assert_equal 'c8bb9ccacf0aaad33677e1b2a661ee6e66a48b5a', sha1(io.string)
+	end
+
+	def test_plain_repack
+		io = StringIO.open File.read("#{TEST_DIR}/test_word_6.doc")
+		assert_equal '9974e354def8471225f548f82b8d81c701221af7', sha1(io.string)
+		Ole::Storage.open io, &:repack
+		# note equivalence to the above flush, repack, flush
+		assert_equal 'c8bb9ccacf0aaad33677e1b2a661ee6e66a48b5a', sha1(io.string)
 	end
 
 	def test_create_from_scratch_hash
 		io = StringIO.new
 		Ole::Storage.new(io) { }
-		assert_equal '6bb9d6c1cdf1656375e30991948d70c5fff63d57', Digest::SHA1.hexdigest(io.string)
+		assert_equal '6bb9d6c1cdf1656375e30991948d70c5fff63d57', sha1(io.string)
+		# more repack test, note invariance
+		Ole::Storage.open io, &:repack
+		assert_equal '6bb9d6c1cdf1656375e30991948d70c5fff63d57', sha1(io.string)
 	end
 end
 

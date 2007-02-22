@@ -28,16 +28,22 @@ class Msg
 	Log = Logger.new_with_callstack
 
 	attr_reader :root, :attachments, :recipients, :headers, :properties
+	attr_accessor :close_parent
 	alias props :properties
 
-	# Alternate constructor, to create an +Msg+ directly from +io+, a seekable IO object
-	def self.load io
-		Msg.new Ole::Storage.load(io).root
+	# Alternate constructor, to create an +Msg+ directly from +arg+ and +mode+, passed
+	# directly to Ole::Storage (ie either filename or seekable IO object).
+	def self.open arg, mode=nil
+		msg = Msg.new Ole::Storage.open(arg, mode=nil).root
+		# we will close the ole when we are #closed
+		msg.close_parent = true
+		msg
 	end
 
 	# Create an Msg from +root+, an <tt>Ole::Storage::Dirent</tt> object
 	def initialize root
 		@root = root
+		@close_parent = false
 		@attachments = []
 		@recipients = []
 		@properties = Properties.load @root
@@ -70,11 +76,17 @@ class Msg
 		populate_headers
 	end
 
+	def close
+		@root.ole.close if @close_parent
+	end
+
 	def headers
 		@mime.headers
 	end
 
 	# copy data from msg properties storage to standard mime. headers
+	# i've now seen it where the existing headers had heaps on stuff, and the msg#props had
+	# practically nothing. think it was because it was a tnef - msg conversion done by exchange.
 	def populate_headers
 		# construct a From value
 		# should this kind of thing only be done when headers don't exist already? maybe not. if its
@@ -92,18 +104,25 @@ class Msg
 			else
 				[email || name]
 			end
-		elsif !self.from
+		elsif !headers.has_key?('From')
 			# some messages were never sent, so that sender stuff isn't filled out. need to find another
 			# way to get something
 			# what about marking whether we thing the email was sent or not? or draft?
 			# for partition into an eventual Inbox, Sent, Draft mbox set?
-			if name or email
+			# i've now seen cases where this stuff is missing, but exists in transport message headers,
+			# so maybe i should inhibit this in that case.
+			if email
 				Log.warn "* no smtp sender email address available (only X.400). creating fake one"
 				# this is crap. though i've specially picked the logic so that it generates the correct
-				# email addresses in my case.
-				user = name.sub /(.*), (.*)/, "\\2.\\1"
+				# email addresses in my case (for my organisation).
+				# this user stuff will give valid email i think, based on alias.
+				user = name ? name.sub(/(.*), (.*)/, "\\2.\\1") : email[/\w+$/].downcase
 				domain = (email[%r{^/O=([^/]+)}i, 1].downcase + '.com' rescue email)
-				headers['From'] = [%{"#{name}" <#{user}@#{domain}>}]
+				headers['From'] = [name ? %{"#{name}" <#{user}@#{domain}>} : "<#{user}@#{domain}>" ]
+			elsif name
+				# we only have a name? thats screwed up.
+				Log.warn "* no smtp sender email address available (only name). creating fake one"
+				headers['From'] = [%{"#{name}"}]
 			else
 				Log.warn "* no sender email address available at all. FIXME"
 			end
@@ -130,7 +149,7 @@ class Msg
 		headers['Subject'] = [props.subject] if props.subject
 
 		# fill in a date value. by default, we won't mess with existing value hear
-		if headers['Date'].empty?
+		if !headers.has_key?('Date')
 			# we want to get a received date, as i understand it.
 			# use this preference order, or pull the most recent?
 			keys = %w[message_delivery_time client_submit_time last_modification_time creation_time]
@@ -150,10 +169,10 @@ class Msg
 			headers['Date'] = [Time.iso8601(time.to_s).rfc2822] if time
 		end
 
-		if headers['Message-ID'].empty? and props.internet_message_id
+		if !headers.has_key?('Message-ID') and props.internet_message_id
 			headers['Message-ID'] = [props.internet_message_id]
 		end
-		if headers['In-Reply-To'].empty? and props.in_reply_to_id
+		if !headers.has_key?('In-Reply-To') and props.in_reply_to_id
 			headers['In-Reply-To'] = [props.in_reply_to_id]
 		end
 	end
@@ -164,12 +183,12 @@ class Msg
 
 	# redundant?
 	def type
-		props.message_class[/IPM\.(.*)/, 1].downcase
+		props.message_class[/IPM\.(.*)/, 1].downcase rescue nil
 	end
 
 	# shortcuts to some things from the headers
 	%w[From To Cc Bcc Subject].each do |key|
-		define_method(key.downcase) { headers[key].join(' ') unless headers[key].empty? }
+		define_method(key.downcase) { headers[key].join(' ') if headers.has_key?(key) }
 	end
 
 	def inspect
@@ -205,17 +224,12 @@ class Msg
 			# its actually possible for plain body to be empty, but the others not.
 			# if i can get an html version, then maybe a callout to lynx can be made...
 			mime.parts << Mime.new("Content-Type: text/plain\r\n\r\n" + props.body) if props.body
-			mime.parts << Mime.new("Content-Type: text/html\r\n\r\n"  + props.body_html.read) if props.body_html
-			#mime.parts << Mime.new("Content-Type: text/rtf\r\n\r\n"   + props.body_rtf)  if props.body_rtf
+			# this may be automatically unwrapped from the rtf if the rtf includes the html
+			mime.parts << Mime.new("Content-Type: text/html\r\n\r\n"  + props.body_html) if props.body_html
 			# temporarily disabled the rtf. its just showing up as an attachment anyway.
-			# for now, what i can do, is this:
-			# (maybe i should just overload body_html do to this)
+			#mime.parts << Mime.new("Content-Type: text/rtf\r\n\r\n"   + props.body_rtf)  if props.body_rtf
 			# its thus currently possible to get no body at all if the only body is rtf. that is not
-			# really acceptable
-			if props.body_rtf and !props.body_html
-				html = Msg::RTF.rtf2html props.body_rtf
-				mime.parts << Mime.new("Content-Type: text/html\r\n\r\n" + html.gsub(/(<\/html>).*\Z/mi, "\\1"))
-			end
+			# really acceptable FIXME
 			mime
 		else
 			# check no header case. content type? etc?. not sure if my Mime class will accept
@@ -381,6 +395,8 @@ class Msg
 			# but if the attachment data is a string, then it won't work. possible?
 			data_str = if @embedded_msg
 				mime.headers['Content-Type'] = 'message/rfc822'
+				# not filename. rather name, or something else right?
+				mime.headers['Content-Disposition'] = [%{attachment; filename="#{@embedded_msg.subject}"}]
 				@embedded_msg.to_mime.to_s
 			elsif @embedded_ole
 				# kind of hacky
@@ -464,7 +480,8 @@ if $0 == __FILE__
 	# just shut up and convert a message to eml
 	Msg::Log.level = Logger::WARN
 	Msg::Log.level = Logger::FATAL if quiet
-	msg = Msg.load open(ARGV[0])
+	msg = Msg.open ARGV[0]
 	puts msg.to_mime.to_s
+	msg.close
 end
 
