@@ -51,7 +51,7 @@ module Ole # :nodoc:
 	#        |- #<Dirent:"__substg1.0_0FF60102" size=4 data="AAAAAA==">
 	#   	 ...
 	#   # write some data, and finish up (note that open is 'r+', so this overwrites
-	#   # but doesn't truncate
+	#   # but doesn't truncate)
 	#   ole.root["\001CompObj"].open { |f| f.write "blah blah" }
 	#   ole.close
 	#

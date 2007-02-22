@@ -44,6 +44,13 @@
   maybe better handling in general for attached messages. maybe re-write filename with
 	subject.
 
+* do the above 2, then go for a new release.
+  for this release, i want it to be pretty robust, and have better packaging.
+  have the gem install 2 tools - oletool (--tree, --read, --write, --repack)
+  and msgtool (--convert, --dump-attachments etc)
+  fix docs, add option parsing etc etc.
+  submit to the usual gem repositories etc, announce project as usable.
+
 * better handling for other types of embedded ole attachments. try to recognise .wmf to
 	start with. etc. 2 goals, form .eml, and for .rtf output.
 
