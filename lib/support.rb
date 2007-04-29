@@ -1,4 +1,3 @@
-#! /usr/bin/ruby
 
 # 
 # A file with general support functions used by most files in the project.

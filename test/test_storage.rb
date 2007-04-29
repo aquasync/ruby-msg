@@ -5,7 +5,10 @@ $: << "#{TEST_DIR}/../lib"
 
 require 'test/unit'
 require 'ole/storage'
+require 'digest/sha1'
+require 'stringio'
 
+#
 # = TODO
 #
 # These tests could be a lot more complete.
@@ -95,15 +98,12 @@ class TestStorageRead < Test::Unit::TestCase
 	end
 end
 
-require 'digest/sha1'
-require 'stringio'
-
 class TestStorageWrite < Test::Unit::TestCase
 	def sha1 str
 		Digest::SHA1.hexdigest str
 	end
-
-	# fixme
+	
+	# FIXME
 	# don't really want to lock down the actual internal api's yet. this will just
 	# ensure for the time being that #flush continues to work properly. need a host
 	# of checks involving writes that resize their file bigger/smaller, that resize

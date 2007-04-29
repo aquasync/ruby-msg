@@ -1,6 +1,6 @@
 
 # move to support?
-class IO
+class IO # :nodoc:
 	def self.copy src, dst
 		until src.eof?
 			buf = src.read(4096)
@@ -173,8 +173,6 @@ class RangesIO
 		yield read(blocksize) until eof?
 	end
 
-	# write should look fairly similar to the above.
-	
 	def inspect
 		# the rescue is for empty files
 		pos, len = *(range_and_offset(@pos)[0] rescue [nil, nil])

@@ -34,7 +34,7 @@ class Msg
 	# Alternate constructor, to create an +Msg+ directly from +arg+ and +mode+, passed
 	# directly to Ole::Storage (ie either filename or seekable IO object).
 	def self.open arg, mode=nil
-		msg = Msg.new Ole::Storage.open(arg, mode=nil).root
+		msg = Msg.new Ole::Storage.open(arg, mode).root
 		# we will close the ole when we are #closed
 		msg.close_parent = true
 		msg

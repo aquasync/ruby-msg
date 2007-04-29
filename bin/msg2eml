@@ -11,7 +11,7 @@ def msg2eml
 	# just shut up and convert a message to eml
 	Msg::Log.level = Logger::WARN
 	Msg::Log.level = Logger::FATAL if quiet
-	msg = Msg.load open(ARGV[0])
+	msg = Msg.open ARGV[0]
 	puts msg.to_mime.to_s
 end
 

@@ -2,8 +2,6 @@
 
 $: << File.dirname(__FILE__) + '/..'
 
-require 'iconv'
-require 'date'
 require 'support'
 
 require 'stringio'
@@ -18,7 +16,7 @@ module Ole # :nodoc:
 	# 
 	# = Introduction
 	#
-	# <tt>Ole::Storage</tt> is a simple class intended to abstract away details of the
+	# <tt>Ole::Storage</tt> is a class intended to abstract away details of the
 	# access to OLE2 structured storage files, such as those produced by
 	# Microsoft Office, eg *.doc, *.msg etc.
 	#
@@ -76,7 +74,7 @@ module Ole # :nodoc:
 	# 3. need to fix META_BAT support in #flush.
 	#
 	class Storage
-		VERSION = '1.1.1'
+		VERSION = '1.1.2'
 
 		# The top of the ole tree structure
 		attr_reader :root
@@ -108,9 +106,7 @@ module Ole # :nodoc:
 			# silence undefined warning in clear
 			@sb_file = nil
 			# if the io object has data, we should load it, otherwise start afresh
-			if @io.size > 0; load
-			else clear
-			end
+			@io.size > 0 ? load : clear
 		end
 
 		def self.new arg, mode=nil
@@ -202,13 +198,10 @@ destroy things.
 		def flush
 			# recreate dirs from our tree, split into dirs and big and small files
 			@root.type = :root
-			# for now.
 			@root.name = 'Root Entry'
 			@root.first_block = @sb_file.first_block
 			@root.size = @sb_file.size
 			@dirents = @root.flatten
-			#dirs, files = @dirents.partition(&:dir?)
-			#big_files, small_files = files.partition { |file| file.size > @header.threshold }
 
 			# maybe i should move the block form up to RangesIO, and get it for free at all levels.
 			# Dirent#open gets block form for free then
@@ -216,7 +209,6 @@ destroy things.
 			io.truncate 0
 			@dirents.each { |dirent| io.write dirent.save }
 			padding = (io.size / @bbat.block_size.to_f).ceil * @bbat.block_size - io.size
-			#p [:padding, padding]
 			io.write 0.chr * padding
 			@header.dirent_start = io.first_block
 			io.close
@@ -235,12 +227,12 @@ destroy things.
 			# truncate. then when its time to write, convert that chain and some chunk of blocks at
 			# the end, into META_BAT blocks. write out the chain, and those meta bat blocks, and its
 			# done.
-
 			@bbat.table.map! do |b|
 				b == AllocationTable::BAT || b == AllocationTable::META_BAT ?
 					AllocationTable::AVAIL : b
 			end
 			io = RangesIOResizeable.new @bbat, AllocationTable::EOC
+	
 			# use crappy loop for now:
 			while true
 				bbat_data = @bbat.save
@@ -271,6 +263,8 @@ destroy things.
 			@header.num_mbat = 0
 
 =begin
+			# Old save code. remove shortly
+
 			bbat_data = new_bbat.save
 			# must exist as linear chain stored in header.
 			@header.num_bat = (bbat_data.length / new_bbat.block_size.to_f).ceil
@@ -295,10 +289,7 @@ destroy things.
 		end
 
 		def clear
-			# first step though is to support modifying pre-existing and saving, then this
-			# missing gap will be fairly straight forward - essentially initialize to
-			# equivalent of loading an empty ole document.
-			#raise NotImplementedError, 'unable to create new ole objects from scratch as yet'
+			# initialize to equivalent of loading an empty ole document.
 			Log.warn 'creating new ole storage object on non-writable io' unless @writeable
 			@header = Header.new
 			@bbat = AllocationTable::Big.new self
@@ -484,12 +475,12 @@ destroy things.
 				blocks_to_ranges chain, size
 			end
 
-		# Turn a chain (an array given by +chain+) of big blocks, optionally
-		# truncated to +size+, into an array of arrays describing the stretches of
-		# bytes in the file that it belongs to.
-		#
-		# Big blocks are of size Ole::Storage::Header#b_size, and are stored
-		# directly in the parent file.
+			# Turn a chain (an array given by +chain+) of big blocks, optionally
+			# truncated to +size+, into an array of arrays describing the stretches of
+			# bytes in the file that it belongs to.
+			#
+			# Big blocks are of size Ole::Storage::Header#b_size, and are stored
+			# directly in the parent file.
 			# truncate the chain if required
 			# convert chain to ranges of the block size
 			# truncate final range if required
@@ -548,7 +539,7 @@ destroy things.
 						block = get_free_block
 						# connect the chain. handle corner case of blocks being [] initially
 						if last_block
-							@table[last_block] = block 
+							@table[last_block] = block
 						else
 							first_block = block
 						end
@@ -677,6 +668,10 @@ destroy things.
 		# 
 		# was considering separate classes for dirs and files. some methods/attrs only
 		# applicable to one or the other.
+		#
+		# Note that Dirent is still using a home grown Struct variant, with explicit
+		# MEMBERS etc. any reason for that still?
+		#
 		class Dirent
 			MEMBERS = [
 				:name_utf16, :name_len, :type_id, :colour, :prev, :next, :child,
@@ -686,7 +681,6 @@ destroy things.
 			]
 			PACK = 'a64 S C C L3 a16 L a8 a8 L2 a4'
 			SIZE = 128
-			EPOCH = DateTime.parse '1601-01-01'
 			TYPE_MAP = {
 				# this is temporary
 				0 => :empty,
@@ -701,9 +695,6 @@ destroy things.
 			# used in the next / prev / child stuff to show that the tree ends here.
 			# also used for first_block for directory.
 			EOT = 0xffffffff
-			# All +Dirent+ names are in UTF16, which we convert
-			FROM_UTF16 = Iconv.new 'utf-8', 'utf-16le'
-			TO_UTF16   = Iconv.new 'utf-16le', 'utf-8'
 
 			include Enumerable
 
@@ -745,7 +736,7 @@ destroy things.
 			def load ole, str
 				@ole = ole
 				@values = str.unpack PACK
-				@name = FROM_UTF16.iconv name_utf16[0...name_len].sub(/\x00\x00$/, '')
+				@name = Types::FROM_UTF16.iconv name_utf16[0...name_len].sub(/\x00\x00$/, '')
 				@type = TYPE_MAP[type_id] or raise "unknown type #{type_id.inspect}"
 				if file?
 					@create_time = Types.load_time create_time_str
@@ -856,7 +847,7 @@ destroy things.
 
 			attr_accessor :name, :type
 			def save
-				tmp = TO_UTF16.iconv(name)
+				tmp = Types::TO_UTF16.iconv(name)
 				tmp = tmp[0, 62] if tmp.length > 62
 				tmp += 0.chr * 2
 				self.name_len = tmp.length
@@ -914,7 +905,7 @@ destroy things.
 			def self.copy src, dst
 				# copies the contents of src to dst. must be the same type. this will throw an
 				# error on copying to root. maybe this will recurse too much for big documents??
-				raise unless src.type == dst.type
+				raise 'differing types' if src.type == :file and dst.type != :file
 				dst.name = src.name
 				if src.dir?
 					src.children.each do |src_child|

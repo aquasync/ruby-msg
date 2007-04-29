@@ -95,7 +95,7 @@ class Msg
 		# not really good though FIXME
 		ENCODINGS = {
 			0x000d =>   proc { |obj| obj }, # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually. in which case we shouldn't get here right?
-			0x001f =>   proc { |obj| Ole::Storage::Dirent::FROM_UTF16.iconv obj.read }, # unicode
+			0x001f =>   proc { |obj| Ole::Types::FROM_UTF16.iconv obj.read }, # unicode
 			# ascii
 			# FIXME hack did a[0..-2] before, seems right sometimes, but for some others it chopped the text. chomp
 			0x001e =>   proc { |obj| a = obj.read; a[-1] == 0 ? a[0...-2] : a },
@@ -215,7 +215,7 @@ class Msg
 				prop = if named
 					str_off = *str.unpack('L')
 					len = *names_data[str_off, 4].unpack('L')
-					Ole::Storage::Dirent::FROM_UTF16.iconv names_data[str_off + 4, len]
+					Ole::Types::FROM_UTF16.iconv names_data[str_off + 4, len]
 				else
 					a, b = str.unpack('S2')
 					Log.debug "b not 0" if b != 0

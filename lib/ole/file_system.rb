@@ -1,23 +1,39 @@
-=begin
+#
+# = Introduction
+#
+# This file intends to provide file system-like api support, a la <tt>zip/zipfilesystem</tt>.
+#
+# Ideally, this will be the recommended interface, allowing Ole::Storage, Dir, and
+# Zip::ZipFile to be used exchangablyk. It should be possible to write recursive copy using
+# the plain api, such that you can copy dirs/files agnostically between any of ole docs, dirs,
+# and zip files.
+#
+# = Usage
+#
+# Currently you can do something like the following:
+#
+#   Ole::Storage.open 'test.doc' do |ole|
+#     ole.dir.entries '/'         # => [".", "..", "\001Ole", "1Table", "\001CompObj", ...]
+#     ole.file.read "\001CompObj" # => "\001\000\376\377\003\n\000\000\377\377..."
+#   end
+#
+# = Notes
+#
+# *** This file is very incomplete
+# 
+# i think its okay to have an api like this on top, but there are certain things that ole
+# does that aren't captured.
+# <tt>Ole::Storage</tt> can have multiple files with the same name, for example, or with
+# / in the name, and other things that are probably invalid anyway.
+# i think this should remain an addon, built on top of my core api.
+# but still the ideas can be reflected in the core, ie, changing the read/write semantics.
+#
+# once the core changes are complete, this will be a pretty straight forward file to complete.
+#
 
-full file_system module
-will be available and recommended usage, allowing Ole::Storage, Dir, and Zip::ZipFile to be
-used pretty exchangably down the track. should be possible to write a recursive copy using
-the plain api, such that you can copy dirs/files agnostically between any of ole docs, dirs,
-and zip files.
+require 'ole/base'
 
-i think its okay to have an api like this on top, but there are certain things that ole
-does that aren't captured.
-ole::storage can have multiple files with the same name, for example, or with / in the
-name, and other things that are probably invalid anyway.
-i think this should remain an addon, built on top of my core api.
-but still the ideas can be reflected in the core, ie, changing the read/write semantics.
-
-once the core changes are complete, this will be a pretty straight forward file to complete.
-
-=end
-
-module Ole
+module Ole # :nodoc:
 	class Storage
 		def file
 			@file ||= FileParent.new self
@@ -49,16 +65,11 @@ module Ole
 				@ole = ole
 			end
 
-			def open path_str, mode='r'
+			def open path_str, mode='r', &block
 				dirent = @ole.dirent_from_path path_str
 				# like Errno::EISDIR
 				raise "#{path_str.inspect} is a directory" unless dirent.file?
-				io = dirent.io
-				if block_given?
-					yield io
-				else
-					io
-				end
+				dirent.open(&block)
 			end
 
 			alias new :open
@@ -70,7 +81,7 @@ module Ole
 			# crappy copy from Dir.
 			def unlink path
 				dirent = @ole.dirent_from_path path
-				# EPERM 
+				# EPERM
 				raise "operation not permitted #{path.inspect}" unless dirent.file?
 				# i think we should free all of our blocks. i think the best way to do that would be
 				# like:
@@ -78,6 +89,7 @@ module Ole
 				# allocation table. then if we remove ourself from our parent, we won't be part of
 				# the bat at save time.
 				# i think if you run repack, all free blocks should get zeroed.
+				open(path) { |f| f.truncate 0 }
 				parent = @ole.dirent_from_path(('/' + path).sub(/\/[^\/]+$/, ''))
 				parent.children.delete dirent
 				1 # hmmm. as per ::File ?
@@ -111,7 +123,6 @@ module Ole
 			# mkdir, and rmdir are the main ones we'd need to support
 			def rmdir path
 				dirent = @ole.dirent_from_path path
-				p dirent
 				# repeating myself
 				raise "#{path.inspect} is not a directory" unless dirent.dir?
 				# ENOTEMPTY:
