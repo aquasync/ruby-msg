@@ -74,7 +74,7 @@ module Ole # :nodoc:
 	# 3. need to fix META_BAT support in #flush.
 	#
 	class Storage
-		VERSION = '1.1.2'
+		VERSION = '1.1.3'
 
 		# The top of the ole tree structure
 		attr_reader :root

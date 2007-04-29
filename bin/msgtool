@@ -1,0 +1,33 @@
+#! /usr/bin/ruby
+
+require 'optparse'
+require 'rubygems'
+require 'msg'
+
+def msgtool
+	opts = {:verbose => false, :action => :convert}
+	op = OptionParser.new do |op|
+		op.banner = "Usage: msgtool [options] [files]"
+		op.separator ''
+		op.on('-c', '--convert', 'Convert msg files (default)') { opts[:action] = :convert }
+		op.separator ''
+		op.on('-v', '--[no-]verbose', 'Run verbosely') { |v| opts[:verbose] = v }
+		op.on_tail('-h', '--help', 'Show this message') { puts op; exit }
+	end
+	msgs = op.parse ARGV
+	if msgs.empty?
+		puts 'Must specify 1 or more msg files.'
+		puts op
+		exit 1
+	end
+	# just shut up and convert a message to eml
+	Msg::Log.level = Ole::Log.level = opts[:verbose] ? Logger::WARN : Logger::FATAL
+	if opts[:action] == :convert
+		msgs.each do |filename|
+			msg = Msg.open filename
+			puts msg.to_mime.to_s
+		end
+	end
+end
+
+msgtool

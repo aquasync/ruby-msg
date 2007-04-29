@@ -20,7 +20,7 @@ require 'mime'
 #
 
 class Msg
-	VERSION = '1.2.15'
+	VERSION = '1.2.16'
 	# we look here for the yaml files in data/, and the exe files for support
 	# decoding at the moment.
 	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
