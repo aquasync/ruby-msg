@@ -48,24 +48,28 @@ class Msg
 	# There also needs to be a way to look up properties more specifically:
 	# 
 	#   properties[0x0037] # => gets the subject
-	#   properties[PS_MAPI, 0x0037] # => still gets the subject
-	#   properties[PS_PUBLIC_STRINGS, 'Keywords'] # => gets the above categories
+	#   properties[0x0037, PS_MAPI] # => still gets the subject
+	#   properties['Keywords', PS_PUBLIC_STRINGS] # => gets outlook's categories array
 	# 
-	# The abbreviate versions work by "resolving" the symbols to full keys:
+	# The abbreviated versions work by "resolving" the symbols to full keys:
 	#
-	#   properties.resolve :keywords # => [PS_OUTLOOK, 'Keywords']
-	#   properties.resolve :subject  # => [PS_MAPI, 0x0037]
+	#		# the guid here is just PS_PUBLIC_STRINGS
+	#   properties.resolve :keywords # => #<Key {00020329-0000-0000-c000-000000000046}/"Keywords">
+	#   # the result here is actually also a key
+	#   k = properties.resolve :subject  # => 0x0037
+	#   # it has a guid
+	#   k.guid == Msg::Properties::PS_MAPI # => true
 	#
 	# = Parsing
 	#
 	# There are three objects that need to be parsed to load a +Msg+ property store:
 	# 
-	#	1. The +nameid+ directory (<tt>Properties.parse_nameid</tt>)
+	# 1. The +nameid+ directory (<tt>Properties.parse_nameid</tt>)
 	# 2. The many +substg+ objects, whose names should match <tt>Properties::SUBSTG_RX</tt>
 	#    (<tt>Properties#parse_substg</tt>)
 	# 3. The +properties+ file (<tt>Properties#parse_properties</tt>)
 	#
-	# Understanding of the formats is by no means perfect
+	# Understanding of the formats is by no means perfect.
 	#
 	# = TODO
 	#
@@ -79,7 +83,7 @@ class Msg
 	#   current greedy-loading approach. still want strings to work nicely:
 	#     props.subject
 	#   but don't want to be loading up large binary blobs, typically attachments, eg
-	#     props.attach_data.
+	#     props.attach_data
 	#   probably the easiest solution is that the binary "encoding", be to return an io
 	#   object instead. and you must read it if you want it as a string
 	#   maybe i can avoid the greedy model anyway? rather than parsing the properties completely,
@@ -98,7 +102,7 @@ class Msg
 			0x001f =>   proc { |obj| Ole::Types::FROM_UTF16.iconv obj.read }, # unicode
 			# ascii
 			# FIXME hack did a[0..-2] before, seems right sometimes, but for some others it chopped the text. chomp
-			0x001e =>   proc { |obj| a = obj.read; a[-1] == 0 ? a[0...-2] : a },
+			0x001e =>   proc { |obj| obj.read.chomp 0.chr },
 			0x0102 =>   proc { |obj| obj.open }, # binary?
 			:default => proc { |obj| obj.open }
 		}
@@ -133,9 +137,13 @@ class Msg
 		attr_reader :unused
 		attr_reader :nameid
 
+		# +nameid+ is to provide a way to inherit from parent (needed for property sets for
+		# attachments and recipients, which inherit from the msg itself. what about nested
+		# msg??)
 		def initialize
 			@raw = {}
 			@unused = []
+			@nameid = nil
 			# FIXME
 			@body_rtf = @body_html = @body = false
 		end
@@ -144,7 +152,7 @@ class Msg
 		# The parsing methods
 		#++
 
-		def self.load obj
+		def self.load obj, ignore=nil
 			prop = Properties.new
 			prop.load obj
 			prop
@@ -154,9 +162,16 @@ class Msg
 		def load obj
 			# we need to do the nameid first, as it provides the map for later user defined properties
 			children = obj.children.dup
-			@nameid = if nameid_obj = children.find { |child| child.name == '__nameid_version1.0' }
+			if nameid_obj = children.find { |child| child.name == '__nameid_version1.0' }
 				children.delete nameid_obj
-				Properties.parse_nameid nameid_obj
+				@nameid = Properties.parse_nameid nameid_obj
+				# hack to make it available to all msg files from the same ole storage object
+				class << obj.ole
+					attr_accessor :msg_nameid
+				end
+				obj.ole.msg_nameid = @nameid
+			elsif obj.ole
+				@nameid = obj.ole.msg_nameid rescue nil
 			end
 			# now parse the actual properties. i think dirs that match the substg should be decoded
 			# as properties to. 0x000d is just another encoding, the dir encoding. it should match
@@ -310,6 +325,8 @@ class Msg
 				elsif real_key = @nameid[key]
 					key = real_key
 				else
+					# i think i hit these when i have a named property, in the PS_MAPI
+					# guid
 					Log.warn "property in named range not in nameid #{key.inspect}"
 					key = Key.new key
 				end

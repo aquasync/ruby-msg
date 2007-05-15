@@ -33,7 +33,7 @@ class Mime
 
 	# Create a Mime object using +str+ as an initial serialization, which must contain headers
 	# and a body (even if empty). Needs work.
-	def initialize str
+	def initialize str, ignore_body=false
 		headers, @body = $~[1..-1] if str[/(.*?\r?\n)(?:\r?\n(.*))?\Z/m]
 
 		@headers = Hash.new { |hash, key| hash[key] = [] }
@@ -47,6 +47,8 @@ class Mime
 		if content_type = @headers['Content-Type'][0]
 			@content_type, attrs = Mime.split_header content_type
 		end
+
+		return if ignore_body
 
 		if multipart?
 			if body.empty?

@@ -20,7 +20,7 @@ require 'mime'
 #
 
 class Msg
-	VERSION = '1.2.16'
+	VERSION = '1.2.17'
 	# we look here for the yaml files in data/, and the exe files for support
 	# decoding at the moment.
 	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
@@ -72,7 +72,9 @@ class Msg
 		# headers. we may get nothing.
 		# and other times, when received from external, we get the full cigar, boundaries
 		# etc and all.
-		@mime = Mime.new props.transport_message_headers.to_s
+		# sometimes its multipart, with no boundaries. that throws an error. so we'll be more
+		# forgiving here
+		@mime = Mime.new props.transport_message_headers.to_s, true
 		populate_headers
 	end
 
@@ -169,11 +171,28 @@ class Msg
 			headers['Date'] = [Time.iso8601(time.to_s).rfc2822] if time
 		end
 
-		if !headers.has_key?('Message-ID') and props.internet_message_id
-			headers['Message-ID'] = [props.internet_message_id]
-		end
-		if !headers.has_key?('In-Reply-To') and props.in_reply_to_id
-			headers['In-Reply-To'] = [props.in_reply_to_id]
+		# some very simplistic mapping between internet message headers and the
+		# mapi properties
+		# any of these could be causing duplicates due to case issues. the hack in #to_mime
+		# just stops re-duplication at that point. need to move some smarts into the mime
+		# code to handle it.
+		mapi_header_map = [
+			[:internet_message_id, 'Message-ID'],
+			[:in_reply_to_id, 'In-Reply-To'],
+			# don't set these values if they're equal to the defaults anyway
+			[:importance, 'Importance', proc { |val| val.to_s == '1' ? nil : val }],
+			[:priority, 'Priority', proc { |val| val.to_s == '1' ? nil : val }],
+			[:sensitivity, 'Sensitivity', proc { |val| val.to_s == '0' ? nil : val }],
+			# yeah?
+			[:conversation_topic, 'Thread-Topic'],
+			# not sure of the distinction here
+			# :originator_delivery_report_requested ??
+			[:read_receipt_requested, 'Disposition-Notification-To', proc { |val| from }]
+		]
+		mapi_header_map.each do |mapi, mime, *f|
+			next unless q = val = props.send(mapi) or headers.has_key?(mime)
+			next if f[0] and !(val = f[0].call(val))
+			headers[mime] = [val.to_s]
 		end
 	end
 
@@ -251,7 +270,15 @@ class Msg
 		unless attachments.empty?
 			mime = Mime.new "Content-Type: multipart/mixed\r\n\r\n"
 			mime.parts << body
-			attachments.each { |attach| mime.parts << attach.to_mime }
+			# i don't know any better way to do this. need multipart/related for inline images
+			# referenced by cid: urls to work, but don't want to use it otherwise...
+			related = false
+			attachments.each do |attach|
+				part = attach.to_mime
+				related = true if part.headers.has_key?('Content-ID') or part.headers.has_key?('Content-Location')
+				mime.parts << part
+			end
+			mime.headers['Content-Type'] = ['multipart/related'] if related
 		end
 
 		# at this point, mime is either
@@ -269,7 +296,10 @@ class Msg
 		# now that we have a root, we can mix in all our headers
 		headers.each do |key, vals|
 			# don't overwrite the content-type, encoding style stuff
-			next unless mime.headers[key].empty?
+			next if mime.headers.has_key? key
+			# some new temporary hacks
+			next if key =~ /content-type/i and vals[0] =~ /base64/
+			next if mime.headers.keys.map(&:downcase).include? key.downcase
 			mime.headers[key] += vals
 		end
 		# just a stupid hack to make the content-type header last, when using OrderedHash
@@ -389,13 +419,18 @@ class Msg
 			mime = Mime.new "Content-Type: #{mimetype}\r\n\r\n"
 			mime.headers['Content-Disposition'] = [%{attachment; filename="#{filename}"}]
 			mime.headers['Content-Transfer-Encoding'] = ['base64']
+			mime.headers['Content-Location'] = [props.attach_content_location] if props.attach_content_location
+			mime.headers['Content-ID'] = [props.attach_content_id] if props.attach_content_id
 			# data.to_s for now. data was nil for some reason.
 			# perhaps it was a data object not correctly handled?
 			# hmmm, have to use read here. that assumes that the data isa stream.
 			# but if the attachment data is a string, then it won't work. possible?
 			data_str = if @embedded_msg
 				mime.headers['Content-Type'] = 'message/rfc822'
+				# lets try making it not base64 for now
+				mime.headers.delete 'Content-Transfer-Encoding'
 				# not filename. rather name, or something else right?
+				# maybe it should be inline?? i forget attach_method / access meaning
 				mime.headers['Content-Disposition'] = [%{attachment; filename="#{@embedded_msg.subject}"}]
 				@embedded_msg.to_mime.to_s
 			elsif @embedded_ole
@@ -409,7 +444,7 @@ class Msg
 			else
 				data.read.to_s
 			end
-			mime.body.replace Base64.encode64(data_str).gsub(/\n/, "\r\n")
+			mime.body.replace @embedded_msg ? data_str : Base64.encode64(data_str).gsub(/\n/, "\r\n")
 			mime
 		end
 

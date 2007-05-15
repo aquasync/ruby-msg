@@ -3,13 +3,23 @@
 require 'optparse'
 require 'rubygems'
 require 'msg'
+require 'time'
+
+def munge_headers mime, opts
+	opts[:header_defaults].each do |s|
+		key, val = s.match(/(.*?):\s+(.*)/)[1..-1]
+		mime.headers[key] = [val] if mime.headers[key].empty?
+	end
+end
 
 def msgtool
-	opts = {:verbose => false, :action => :convert}
+	opts = {:verbose => false, :action => :convert, :header_defaults => []}
 	op = OptionParser.new do |op|
 		op.banner = "Usage: msgtool [options] [files]"
 		op.separator ''
 		op.on('-c', '--convert', 'Convert msg files (default)') { opts[:action] = :convert }
+		op.on('-m', '--convert-mbox', 'Convert msg files for mbox usage') { opts[:action] = :convert_mbox }
+		op.on('-d', '--header-default STR', 'Provide a default value for top level mail header') { |hd| opts[:header_defaults] << hd }
 		op.separator ''
 		op.on('-v', '--[no-]verbose', 'Run verbosely') { |v| opts[:verbose] = v }
 		op.on_tail('-h', '--help', 'Show this message') { puts op; exit }
@@ -22,10 +32,30 @@ def msgtool
 	end
 	# just shut up and convert a message to eml
 	Msg::Log.level = Ole::Log.level = opts[:verbose] ? Logger::WARN : Logger::FATAL
-	if opts[:action] == :convert
+	case opts[:action]
+	when :convert
 		msgs.each do |filename|
 			msg = Msg.open filename
-			puts msg.to_mime.to_s
+			mime = msg.to_mime
+			munge_headers mime, opts
+			puts mime.to_s
+		end
+	when :convert_mbox
+		msgs.each do |filename|
+			msg = Msg.open filename
+			# could use something from the msg in our from line if we wanted
+			puts "From msgtool@ruby-msg #{Time.now.rfc2822}"
+			mime = msg.to_mime
+			munge_headers mime, opts
+			mime.to_s.each do |line|
+				# we do the append > style mbox quoting (mboxrd i think its called), as it
+				# is the only one that can be robuslty un-quoted. evolution doesn't use this!
+				if line =~ /^>*From /o
+					print '>' + line
+				else
+					print line
+				end
+			end
 		end
 	end
 end

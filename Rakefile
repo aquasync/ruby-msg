@@ -47,7 +47,7 @@ spec = Gem::Specification.new do |s|
 	#s.rubyforge_project = %q{ruby-msg}
 
 	s.executables = ['msgtool', 'oletool']
-	s.files  = Dir.glob('data/*.yaml') + ['Rakefile', 'README']
+	s.files  = Dir.glob('data/*.yaml') + ['Rakefile', 'README', 'FIXES']
 	s.files += Dir.glob("lib/**/*.rb")
 	s.files += Dir.glob("test/test_*.rb") + Dir.glob("test/*.doc")
 	s.files += Dir.glob("bin/*")
