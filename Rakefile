@@ -6,8 +6,9 @@ require 'rake/gempackagetask'
 require 'rbconfig'
 require 'fileutils'
 
-$: << './lib'
-require 'msg.rb'
+$:.unshift 'lib'
+
+require 'msg'
 
 PKG_NAME = 'ruby-msg'
 PKG_VERSION = Msg::VERSION
@@ -23,18 +24,8 @@ end
 # RDocTask wasn't working for me
 desc 'Build the rdoc HTML Files'
 task :rdoc do
-	system "rdoc -S -N -m Msg -w 2 -t '#{PKG_NAME} documentation' lib"
+	system "rdoc -S -N --main Msg --tab-width 2 --title '#{PKG_NAME} documentation' lib"
 end
-
-=begin
-Rake::PackageTask.new(PKG_NAME, PKG_VERSION) do |p|
-	p.need_tar_gz = true
-	p.package_dir = 'build'
-	p.package_files.include("Rakefile", "README")
-	p.package_files.include("contrib/*.c")
-	p.package_files.include("test/test_*.rb", "test/*.doc", "lib/*.rb", "lib/ole/storage.rb")
-end
-=end
 
 spec = Gem::Specification.new do |s|
 	s.name = PKG_NAME
@@ -46,15 +37,21 @@ spec = Gem::Specification.new do |s|
 	s.homepage = %q{http://code.google.com/p/ruby-msg}
 	#s.rubyforge_project = %q{ruby-msg}
 
-	s.executables = ['msgtool', 'oletool']
+	s.executables = ['msgtool']
 	s.files  = Dir.glob('data/*.yaml') + ['Rakefile', 'README', 'FIXES']
 	s.files += Dir.glob("lib/**/*.rb")
-	s.files += Dir.glob("test/test_*.rb") + Dir.glob("test/*.doc")
+	s.files += Dir.glob("test/test_*.rb")
 	s.files += Dir.glob("bin/*")
 	
 	s.has_rdoc = true
+	s.rdoc_options += ['--main', 'Msg',
+					   '--title', "#{PKG_NAME} documentation",
+					   '--tab-width', '2']
+
 
 	s.autorequire = 'msg'
+
+	s.add_dependency 'ruby-ole'
 end
 
 Rake::GemPackageTask.new(spec) do |p|

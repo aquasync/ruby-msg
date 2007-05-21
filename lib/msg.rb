@@ -5,7 +5,7 @@ $: << File.dirname(__FILE__)
 require 'yaml'
 require 'base64'
 
-require 'support'
+require 'rubygems'
 require 'ole/storage'
 require 'msg/properties'
 require 'msg/rtf'
@@ -20,7 +20,7 @@ require 'mime'
 #
 
 class Msg
-	VERSION = '1.2.17'
+	VERSION = '1.3.1'
 	# we look here for the yaml files in data/, and the exe files for support
 	# decoding at the moment.
 	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
