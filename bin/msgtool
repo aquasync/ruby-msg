@@ -32,6 +32,8 @@ def msgtool
 	end
 	# just shut up and convert a message to eml
 	Msg::Log.level = Ole::Log.level = opts[:verbose] ? Logger::WARN : Logger::FATAL
+	# for windows. see issue #2
+	STDOUT.binmode
 	case opts[:action]
 	when :convert
 		msgs.each do |filename|
