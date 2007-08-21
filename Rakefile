@@ -51,7 +51,7 @@ spec = Gem::Specification.new do |s|
 
 	s.autorequire = 'msg'
 
-	s.add_dependency 'ruby-ole'
+	s.add_dependency 'ruby-ole', '>=1.2.1'
 end
 
 Rake::GemPackageTask.new(spec) do |p|
