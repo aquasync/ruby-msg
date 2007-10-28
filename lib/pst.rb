@@ -1,10 +1,38 @@
 #! /usr/bin/ruby
 
+#
+# = Introduction
+#
+# This file is mostly an attempt to port libpst to ruby, and simplify it in the process. It
+# will leverage much of the existing MAPI => MIME conversion developed for Msg files, and as
+# such is purely concerned with the file structure details.
+#
+# Already it works better for me on my outlook 97 psts, though a goal of the project is to
+# support version 2003 psts also.
+#
+# = TODO
+# 
+# 1. xattribs
+# 2. attachments
+# 3. tests
+# 3.5 table type 2. compile id. other fixmes?
+# 4. refactor index load
+# 5. cleanup general
+# 6. eml extraction - compare accuracy.
+# 7. outlook 2003
+#
+
 require 'rubygems'
 require 'msg'
 require 'enumerator'
 
 class Pst
+	VERSION = '0.2.0'
+	
+	class FormatError < StandardError
+	end
+
+	# also used in ole/storage, and msg/mime. time to refactor
 	module ToTree
 		def to_tree
 			# we want to call this only once
@@ -55,17 +83,16 @@ class Pst
 		end
 
 		def validate!
-			p self
-			raise "bad signature on pst file (#{'0x%x' % @magic})" unless @magic == MAGIC
-			raise "only index type 0xe is handled (#{'0x%x' % @index_type})" unless @index_type == 0x0e
-			raise "only encrytion types 0 and 1 are handled (#{@encrypt_type.inspect})" unless [0, 1].include?(@encrypt_type)
+			raise FormatError, "bad signature on pst file (#{'0x%x' % @magic})" unless @magic == MAGIC
+			raise FormatError, "only index type 0xe is handled (#{'0x%x' % @index_type})" unless @index_type == 0x0e
+			raise FormatError, "only encrytion types 0 and 1 are handled (#{@encrypt_type.inspect})" unless [0, 1].include?(@encrypt_type)
 		end
 	end
 
 	# compressible encryption! :D
 	#
 	# simple substitution. see libpst.c
-	# maybe switch to using a .tr!
+	# maybe test switch to using a String#tr!
 	class CompressibleEncryption
 		DECRYPT_TABLE = [
 			0x47, 0xf1, 0xb4, 0xe6, 0x0b, 0x6a, 0x72, 0x48,
@@ -133,7 +160,7 @@ class Pst
 			a
 		end
 
-		def self.encrypt2 decrypted
+		def self.encrypt decrypted
 			decrypted.tr DECRYPT_STR, ENCRYPT_STR
 		end
 	end
@@ -145,27 +172,20 @@ class Pst
 	ITEM_COUNT_OFFSET = 0x1f0 # count byte
 	LEVEL_INDICATOR_OFFSET = 0x1f3 # node or leaf
 	BACKLINK_OFFSET = 0x1f8 # backlink u1 value
-	# these constants are in the classes
-	#ITEM_SIZE = 12
-	#DESC_SIZE = 16
-	# i think these may simply be implied by the size of the blocks and the size
-	# of the structures packed within. check it out
-	# 516 / Index::SIZE == 43. and theres the header bit. but, given that that header
-	# bit starts at 0x1f0, then 0x1f0 / 12 is really the max, which is 41. and, if we
-	# assume that the record there is 8, not 12 bytes, then block size is 512, which
-	# makes more sense. ie, that the header goes from 0x1f0 -> 512, which is a 16 byte
-	# header record.
-	# similarly, for the Desc - 0x1f0 / 16 -> 31. so theres nothing unexpected about
-	# this. 
-	# so its seems these are simply tightly packed, nested tree thingies.
-	INDEX_COUNT_MAX = 41 # max active items
-	DESC_COUNT_MAX = 31 # max active items
+	# BLOCK_SIZE - ITEM_COUNT_OFFSET = 20. if BLOCK_SIZE is really 512, then we lose those
+	# 4 bytes, which I think aren't used currently. making it 16 bytes.
+	INDEX_COUNT_MAX = 41 # max active items (ITEM_COUNT_OFFSET / Index::SIZE = 41)
+	DESC_COUNT_MAX = 31 # max active desc records (ITEM_COUNT_OFFSET / Desc::SIZE = 31)
 
 	attr_reader :io, :header, :idx, :desc, :special_folder_ids
 	def initialize io
 		@io = io
 		io.pos = 0
 		@header = Header.new io.read(Header::SIZE)
+
+		# would prefer this to be in Header#validate, but it doesn't have the io size.
+		# should downgrade this to just be a warning...
+		raise FormatError, "header size field invalid (#{header.size} != #{io.size}}" unless header.size == io.size
 
 		load_idx
 		load_desc
@@ -338,7 +358,7 @@ class Pst
 			parent = @desc_from_id[desc.parent_desc_id]
 			# note, besides this, its possible to create other circular structures.
 			if parent == desc
-				warn "desc record's parent is itself (#{desc.inspect})"
+				#warn "desc record's parent is itself (#{desc.inspect})"
 			# maybe add some more checks in here for circular structures
 			elsif parent
 				parent.children << desc
@@ -415,12 +435,16 @@ class Pst
 		end
 	end
 
-	def pst_builidx_id2 idx, idx2=0
+	def load_idx2 idx
+		pst_build_id2 idx #, 0
+	end
+
+	def pst_build_id2 idx #, idx2
 		buf = pst_read_block_size idx.offset, idx.size, false, false
 		type, count = buf.unpack 'v2'
 		unless type == 0x0002
-			warn 'unknown id2 type 0x%04x' % type
-			return
+			raise 'unknown id2 type 0x%04x' % type
+			#return
 		end
 		id2 = []
 		count.times do |i|
@@ -429,6 +453,7 @@ class Pst
 			if assoc.table2 != 0
 				# FIXME implement recursive id2 table loading
 				#warn "deeper id2 tables not handled."
+				id2 += pst_build_id2 idx_from_id(assoc.table2)
 			end
 		end
 		id2
@@ -449,6 +474,7 @@ Looking at the output of this, for blank-o1997.pst, i see this part:
 
 which confirms my belief that the block size for idx and desc is more likely 512
 =end
+if 0 + 0 == 1
 		puts '* file range usage'
 		file_ranges =
 			[[0, Header::SIZE, 'pst file header']] +
@@ -476,6 +502,7 @@ which confirms my belief that the block size for idx and desc is more likely 512
 			extra += ["padding not all zero"] unless pad_bytes == 0.chr * pad
 			puts "- #{offset}:#{size}+#{pad} #{name.inspect}" + (extra.empty? ? '' : ' [' + extra * ', ' + ']')
 		end
+end
 		#return
 		#% idx.idsort_by { |idx| idx.offset }.each { |idx| puts "- #{idx.inspect}" }
 
@@ -486,7 +513,7 @@ which confirms my belief that the block size for idx and desc is more likely 512
 		# the sizes seem to be all even. is that a co-incidence? and the ids are all even. that
 		# seems to be related to something else (see the (id & 2) == 1 stuff)
 		puts '* idx entries'
-		@idx.each { |idx| puts "- #{idx.inspect}" }
+		#@idx.each { |idx| puts "- #{idx.inspect}" }
 
 		# if you look at the desc tree, you notice a few things:
 		# 1. there is a desc that seems to be the parent of all the folders, messages etc.
@@ -537,10 +564,12 @@ which confirms my belief that the block size for idx and desc is more likely 512
 		end
 		if desc.list_index
 		end
-		warn "skipping loading xattribs"
+		#warn "skipping loading xattribs"
 		# FIXME implement loading xattribs
 	end
 
+	# corresponds to:
+	# * _pst_read_block_size
 	def pst_read_block_size offset, size, decrypt=true, is_index=false
 		old_pos = io.pos
 		begin
@@ -599,6 +628,12 @@ which confirms my belief that the block size for idx and desc is more likely 512
 
 			# and then here, those are used, along with a crappy heuristic to determine if we are an
 			# item
+=begin
+i think the low bits of the desc_id can give some info on the type.
+
+it seems that 0x4 is for regular messages (and maybe contacts etc)
+0x2 is for folders, and 0x8 is for special things like rules etc, that aren't visible.
+=end
 			unless type
 				type = valid_folder_mask || ipm_subtree_entryid || content_count || subfolders ? :folder : :item
 				if type == :folder
@@ -675,6 +710,10 @@ which confirms my belief that the block size for idx and desc is more likely 512
 		end
 =end
 
+		def attachments
+			@attachments ||= BlockParser.new(@desc).parse_attachments
+		end
+
 		def method_missing name
 			props.send name
 		end
@@ -709,164 +748,222 @@ looks like it
 		end
 	end
 
-	class RecursiveStub
-		include ToTree
-
-		def children
-			[]
-		end
-
-		def inspect
-			"#<Pst::Item::RecursiveStub ...>"
-		end
-	end
-
 	def pst_parse_item desc
-		#puts "> parsing desc #{desc.desc_id}"
-
-		@parsed ||= {}
-		if @parsed[desc.desc_id]
-			# must be recursive
-			return RecursiveStub.new
-		end
-		@parsed[desc.desc_id] = true
-	
-		unless desc.desc
-			warn "unable to parse #{desc.inspect}"
-			return nil
-		end
-		id2 = if desc.list_index
-			pst_builidx_id2 desc.list_index
-		else
-			# i don't think this is a weird case
-			#warn "no list_index"
-			nil
-		end
-		item = Item.new desc, pst_parse_block(desc.idx_id, id2)
-	end
-
-	def pst_parse_block block_id, id2=nil
-		buf = idx_from_id(block_id).read
-
-		index_offset, type, offset = buf.unpack 'vvV'
-		#p [:block_header, index_offset, type, offset]
-
-		case type
-		when 0xbcec
-			#p 
-			block_type = 1
-			#pst_getBlockOffsetPointer i2_head, buf, read_size, ind_ptr, block_hdr.offset, &block_offset1
-			# the way that offset works, data1 may be a subset of buf, or something from id2. if its from buf,
-			# it will be offset based on index_offset and offset. so it could be some random chunk of data anywhere
-			# in the thing. 
-			data1 = pst_getBlockOffsetPointer id2, buf, index_offset, offset
-			warn 'not good' if data1.length < 8
-			type, ref_type, value = data1.unpack 'vvV'
-			raise "unhandled table rec type 0x%04x" % type if type != 0x02b5
-			# this is actually a big chunk of tag tuples.
-			data2 = pst_getBlockOffsetPointer id2, buf, index_offset, value
-			num_list = data2.length / 8
-			num_recs = 1
-		when 0x7cec
-			# seen this only in the parsing of an attachment record so far.
-			raise 2
-		when 0x0101
-			raise 3
-		else
-			raise "unknown block type 0x%04x" % type
-		end
-
-		immediate_types = [0x0002, 0x0003, 0x000b]
-		indirect_types = [0x0005, 0x000d, 0x0014, 0x001e, 0x0040, 0x0048, 0x0102, 0x1003, 0x01014, 0x101e, 0x1102]
-		x = []
-
-		num_recs.times do |rec|
-			num_list.times do |list|
-				if block_type == 1
-					type, ref_type, value = data2[8 * list, 8].unpack 'vvV'
-					if immediate_types.include? ref_type
-						# the value is actually the value....
-						# do some coercion
-						case ref_type
-						when 0x000b
-							value = value != 0
-						end
-					elsif indirect_types.include? ref_type
-						# the value is a pointer
-						value = pst_getBlockOffsetPointer id2, buf, index_offset, value
-					else
-						# unhandled
-						raise "unsupported ref_type %04x" % ref_type
-					end
-					x << [type, ref_type, value]
-				end
-			end
-		end
-
-		x
+		Item.new desc, BlockParser.new(desc).to_a
 	end
 
 	# the job of this class, is to take a desc record, and be able to enumerate through the
 	# mapi properties of the associated thing.
 	class BlockParser
-		attr_reader :desc, :idx2, :data
+		include Enumerable
+
+		class FormatError < StandardError
+		end
+
+		TYPES = {
+			0xbcec => 1,
+			0x7cec => 2,
+			#0x0101 => 3
+		}
+
+		PR_SUBJECT = Msg::Properties::MAPITAGS.find { |num, (name, type)| name == 'PR_SUBJECT' }.first.hex
+
+		# this stuff could maybe be moved to Ole::Types? or leverage it somehow?
+		IMMEDIATE_TYPES = [0x0002, 0x0003, 0x000b]
+		INDIRECT_TYPES = [0x0005, 0x000d, 0x0014, 0x001e, 0x0040, 0x0048, 0x0102, 0x1003, 0x01014, 0x101e, 0x1102]
+
+		attr_reader :desc, :data, :index_data, :type, :index_offset, :offset1
 		def initialize desc
-			raise "unable to get associated index record for #{desc.inspect}" unless desc.desc
+			raise FormatError, "unable to get associated index record for #{desc.inspect}" unless desc.desc
 			@desc = desc
-			# a given desc record may or may not have associated idx2 data.
-			@idx2 = desc.pst.pst_builidx_id2 desc.list_index if desc.list_index
 		end
 
-		def load data
+		# a given desc record may or may not have associated idx2 data. we lazily load it here, so it will never
+		# actually be requested unless get_data_indirect actually needs to use it.
+		def idx2
+			return @idx2 if @idx2
+			raise FormatError, 'idx2 requested but no idx2 available' unless desc.list_index
+			# should check this can't return nil
+			@idx2 = desc.pst.load_idx2 desc.list_index
+		end
+
+		def parse_data data
 			@data = data
+			@index_offset, type, @offset1 = data.unpack 'vvV'
+			# swap index_offset and type in this case (type 3 case)
+			#@index_offset, type = type, @index_offset if !TYPES[type] and @index_offset == 0x0101
+			raise FormatError, 'unknown block type signature 0x%04x' % type unless TYPES[type]
+			@type = TYPES[type]
+			send "parse_block_header_#{@type}"
+		end
 
+		def parse_block_header_1
+			# the way that offset works, data1 may be a subset of buf, or something from id2. if its from buf,
+			# it will be offset based on index_offset and offset. so it could be some random chunk of data anywhere
+			# in the thing. 
+			header_data = get_data_indirect @offset1
+			raise FormatError if header_data.length < 8
+			signature, offset2 = header_data.unpack 'V2'
+			raise FormatError, 'unhandled block signature 0x%08x' % type if signature != 0x000602b5
+			# this is actually a big chunk of tag tuples.
+			@index_data = get_data_indirect offset2
+			@num_list = @index_data.length / 8
+			@num_recs = 1
+		end
 
-		item = Item.new desc, pst_parse_block(desc.idx_id, id2)
-	# based on the value of offset, return either some data from buf, or some data from the
-	# id2 chain id2, where offset is some key into a lookup table that is stored as the id2
-	# chain. i think i may need to create a BlockParser class that wraps up all this mess.
-	def get_data_indirect id2, buf, i_offset, offset
-		if offset == 0
-			nil
-		elsif (offset & 0xf) == 0xf
-			#warn "id2 value unhandled"
-			warn 'called into id2 part of getBlockOffsetPointer but id2 undefined' unless id2
-			pst_getID2block offset, id2
-			#nil
-		else
-			low, high = offset & 0xf, offset >> 4
-			raise 'blah' if i_offset == 0 or low != 0 or i_offset + 2 + high + 4 > buf.length
-			from, to = buf[i_offset + 2 + high, 4].unpack 'v2'
-			raise 'blah 2' if from > to
-			buf[from...to]
+		def parse_block_header_2
+			header_data = get_data_indirect @offset1
+			# seven_c_blk
+			seven_c, @num_list, u1, u2, u3, @rec_size, b_five_offset,
+				ind2_offset, u7, u8 = header_data[0, 22].unpack('ccv4V2v2')
+			raise unless seven_c == 0x7c
+			@index_data = header_data[22..-1]
+
+			header_data2 = get_data_indirect b_five_offset
+			raise FormatError if header_data2.length < 8
+			signature, offset2 = header_data2.unpack 'V2'
+			raise FormatError, 'unhandled block signature 0x%08x' % type if signature != 0x000204b5
+			@data2 = get_data_indirect offset2
+			@num_recs = @data2.length / 6
+			@data3 = get_data_indirect ind2_offset
+
+	
+			# #<struct Pst::Index id=0x110, offset=0x8400, size=0xfa, u1=0x2>
+			# #<struct Pst::Index id=0x160, offset=0xcb40, size=0x18c, u1=0x2>
+		end
+
+		def parse_attachments
+			return nil unless desc.list_index
+			return nil unless id = desc.pst.pst_getID2(idx2, 0x671)
+			idx = desc.pst.idx_from_id id
+			# make a fake desc.
+			require 'ostruct'
+			desc2 = OpenStruct.new :desc => idx, :pst => desc.pst, :list_index => desc.list_index
+			BlockParser.new(desc2).to_a
+		end
+
+		def each
+			# call parse_data if it hasn't been called already
+			parse_data desc.desc.read unless @type
+
+			@num_recs.times do |rec|
+				@num_list.times do |list|
+					if @type == 1
+						type, ref_type, value = @index_data[8 * list, 8].unpack 'vvV'
+					elsif @type == 2
+						unpack = 'v3cc'
+						begin
+							ref_type, type, ind2_off, size, slot = @index_data[10 * list, 10].unpack(unpack)
+						rescue
+							next
+						end
+						value = @data3[ind2_off, size] rescue nil
+						next if value == nil
+						if INDIRECT_TYPES.include? ref_type
+							value = value.unpack('V')[0]
+						end
+						p ['0x%04x' % type, (Msg::Properties::MAPITAGS['%04x' % type].first[/^.._(.*)/, 1].downcase rescue nil),
+								ref_type, value, (get_data_indirect(value) rescue nil), size, ind2_off, slot]
+					end
+
+					case ref_type
+					when 0x002c, 0x001c, 0x0038, 0x67f2, 0x0004
+						# ignore
+						next
+					when 0x000b
+						value = value != 0
+					when *IMMEDIATE_TYPES # not including 0x000b which we just did
+						# the value is actually the value....
+					when *INDIRECT_TYPES
+						# the value is a pointer
+						value = get_data_indirect(value) rescue next
+						# special subject handling
+						if type == PR_SUBJECT
+							ignore, offset = value.unpack 'C2'
+							offset = (offset == 1 ? nil : offset - 3)
+							value = value[2..-1]
+=begin
+							index = value =~ /^[A-Z]*:/ ? $~[0].length - 1 : nil
+							unless ignore == 1 and offset == index
+								warn 'something wrong with subject hack' 
+								$x = [ignore, offset, value]
+								require 'irb'
+								IRB.start
+								exit
+							end
+=end
+							# now what i think, is that perhaps, value[offset..-1] ...
+							# or something like that should be stored as a special tag. ie, do a double yield
+							# for this case. probably PR_CONVERSATION_TOPIC, in which case i'd write instead:
+							# yield [PR_SUBJECT, ref_type, value]
+							# yield [PR_CONVERSATION_TOPIC, ref_type, value[offset..-1]
+							# next # to skip the yield.
+						end
+					else
+						# unhandled
+						raise FormatError, 'unsupported ref_type %04x' % ref_type
+					end
+					yield [type, ref_type, value]
+				end
+			end
+		end
+
+		# based on the value of offset, return either some data from buf, or some data from the
+		# id2 chain id2, where offset is some key into a lookup table that is stored as the id2
+		# chain. i think i may need to create a BlockParser class that wraps up all this mess.
+		#
+		# corresponds to:
+		# * _pst_getBlockOffsetPointer
+		# * _pst_getBlockOffset
+		def get_data_indirect offset
+			if offset == 0
+				nil
+			elsif (offset & 0xf) == 0xf
+				#warn "id2 value unhandled"
+				#warn 'called into id2 part of getBlockOffsetPointer but id2 undefined' unless idx2
+				desc.pst.pst_getID2block offset, idx2
+				#nil
+			else
+				low, high = offset & 0xf, offset >> 4
+				raise FormatError if index_offset == 0 or low != 0 or index_offset + 2 + high + 4 > data.length
+				from, to = data[index_offset + 2 + high, 4].unpack 'v2'
+				raise FormatError if from > to
+				data[from...to]
+			end
 		end
 	end
 
-	def pst_getBlockOffsetPointer id2, buf, i_offset, offset
-		if offset == 0
-			nil
-		elsif (offset & 0xf) == 0xf
-			#warn "id2 value unhandled"
-			warn 'called into id2 part of getBlockOffsetPointer but id2 undefined' unless id2
-			pst_getID2block offset, id2
-			#nil
-		else
-			low, high = offset & 0xf, offset >> 4
-			raise 'blah' if i_offset == 0 or low != 0 or i_offset + 2 + high + 4 > buf.length
-			from, to = buf[i_offset + 2 + high, 4].unpack 'v2'
-			raise 'blah 2' if from > to
-			buf[from...to]
-		end
-	end
-
+	# corresponds to:
+	# * _pst_ff_getID2block
+	# * _pst_ff_getID2data
 	def pst_getID2block id2, id2_head
 		idx = idx_from_id pst_getID2(id2_head, id2)
+		#p [id2, id2_head, idx]
 		if (idx.id & 0x2) == 0
+			p idx
 			idx.read
 		else
 			#warn 'weird compile id thing not handled yet'
-			return nil
+			warn "Assuming it is a multi-block record because of it's id"
+			pst_getID2block_rec idx
 		end
+	end
+
+	# corresponds to:
+	# * _pst_ff_compile_ID
+	def pst_getID2block_rec idx, str=''
+		buf = idx.read
+		type, fdepth, count = buf[0, 4].unpack 'ccv'
+		raise 'uh oh' unless type == 1 # libpst.c:3958
+		count.times do |i|
+			x = buf[8 + i * 4, 4].unpack('V')[0]
+			if fdepth == 1
+				str << idx_from_id(x).read
+			else
+				pst_getID2block_rec x, str
+			end
+		end
+		str
 	end
 
 	# id2 is the array of id2assoc. id is the id2 value we're looking for
@@ -874,9 +971,16 @@ looks like it
 		id2.find { |x| x.id2 == id }.id rescue nil
 	end
 
-	def inspect
-		"#<Pst name=#{(@name ||= root_item.display_name).inspect} io=#{io.inspect}>"
+	def name
+		@name ||= root_item.display_name
 	end
+	
+	def inspect
+		"#<Pst name=#{name.inspect} io=#{io.inspect}>"
+	end
+
+	# ------------------
+	# various hacks, using the format knowledge above to try to search for meaining in 2003 psts...
 
 	# this searches for occurences of 0xbcec, sees if it is part of the header signature of a block containing
 	# mapi string tags, and then collates all that it finds. this is in order to dump a series of index block
@@ -984,12 +1088,88 @@ looks like it
 	end
 end
 
-if $0 == __FILE__ #or true
-	open 'test-o1997.pst' do |f|
-#	open 'blank-o1997.pst' do |f|
-#	open 'blank-o2003.pst' do |f|
-		pst = Pst.new(f)
-		pst.dump_debug_info
+if $0 == __FILE__
+	require 'test/unit'
+
+	class TestPst3 < Test::Unit::TestCase
+		attr_reader :pst
+		def setup
+			@io = open 'test3-o1997.pst', 'rb'
+			@pst = Pst.new @io
+		end
+
+		def test_pst_structure
+			assert_equal 'Personal Folders', pst.name
+			assert_equal 47, pst.idx.length
+			assert_equal 34, pst.desc.length
+			assert_equal 3, pst.root_item.children # trash, message, search
+		end
+
+		def test_message_properties
+			message = pst.root_item.children[1]
+			expected_properties = {
+				# bools
+				:alternate_recipient_allowed => true,
+				:read_receipt_requested => false,
+				:delete_after_submit => false,
+				:originator_delivery_report_requested => false,
+
+				# numbers
+				:priority => 0,
+				:sensitivity => 0,
+				:importance => 1,
+				:internet_cpid => 20127,
+				:action => 4294967295,
+				:message_size => 39974,
+				:message_flags => 25,
+				:profile_offline_store_path => 746,
+
+				# strings
+				:conversation_topic => 'draft message test with attachment',
+				:subject => 'draft message test with attachment',
+				:last_modifier_name => 'Charles Lowe',
+				:message_class => 'IPM.Note',
+				:display_to => 'nobody in particular',
+				:body => "012346789\r\n" * 1000 + "\r\n \r\n",
+				:body_html => "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\">\r\n" \
+											"<HTML><HEAD>\r\n<META http-equiv=Content-Type content=\"text/html; charset=us-ascii\">\r\n" \
+											"<META content=\"MSHTML 6.00.2900.3199\" name=GENERATOR></HEAD>\r\n" \
+											"<BODY><FONT face=Arial \r\nsize=2>" + '012346789<BR>' * 1000 +
+											"</FONT></FONT>\r\n<DIV><FONT face=Arial size=2></FONT>&nbsp;</DIV></BODY></HTML>\r\n",
+
+				# other
+				# are these entry ids?
+				:predecessor_change_list => "\024R\237\307\010\203\357\331J\265\231[\006s\254\373U\000\000x}",
+				:change_key => "R\237\307\010\203\357\331J\265\231[\006s\254\373U\000\000x}",
+				:search_key=>"PJ\204O\244\225\374N\224\376\3568\347\325\037\230",
+				:sentmail_entryid => "\000\000\000\000\330\t\305\234!\302\vD\263\351\223[\217d;.\001\000\357\372\346\t\270fcL\274X\241\201\322\367\000\306\000\000\001!F\301\000\000",
+				# this will get parsed as a time later.
+				:last_modification_time => "\000\214ahX\024\310\001",
+				:creation_time=>"\000\214ahX\024\310\001",
+				:message_delivery_time => "\300\344J\247X\024\310\001",
+			}
+
+			# check hashes have the same keys
+			assert_equal expected_properties.keys.sort_by { |k| k.to_s }, message.props.to_h.keys.sort_by { |k| k.to_s }
+			# assert each component is equal. this is for easier to read failures.
+			expected_properties.each { |key, value| assert_equal value, message.props[key], "#{key} property" }
+
+			p message.attachments
+		end
 	end
 end
+
+=begin
+
+* test3-o1997.pst. idx records whose data contains '01234':
+
+[#<struct Pst::Index id=240, offset=34112, size=8180, u1=2>,  <- attachment part 1
+ #<struct Pst::Index id=248, offset=85568, size=2820, u1=2>,  <- attachment part 2
+ #<struct Pst::Index id=296, offset=92032, size=8180, u1=2>,  <- body_html part 1
+ #<struct Pst::Index id=304, offset=100224, size=5142, u1=2>, <- body_html part 2
+ #<struct Pst::Index id=328, offset=105408, size=8180, u1=2>, <- body part 1
+ #<struct Pst::Index id=336, offset=113600, size=2825, u1=2>] <- body part 2
+
+=end
+
 
