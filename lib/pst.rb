@@ -13,22 +13,123 @@
 # = TODO
 # 
 # 1. xattribs
-# 2. attachments
-# 3. tests
-# 3.5 table type 2. compile id. other fixmes?
+# 2. better tests
+# 3. use tests to isolate any more of the encrypt vs non-encrypt issues, try and understand the & 1
+#    & 2 stuff etc.
 # 4. refactor index load
-# 5. cleanup general
+# 5. cleanup general. try to rationalise the code.
 # 6. eml extraction - compare accuracy.
 # 7. outlook 2003
 #
+
+=begin
+
+restruct msg project to share more code. eg, perhaps something like:
+
+module Mapi
+	class Message
+		class Attachment
+		end
+
+		class Recipient
+		end
+	end
+
+	class Pst
+	end
+
+	class Msg
+	end
+end
+
+where Mapi::Pst and ::Msg are just some sort of generalised property store style backends, and the
+majority of the message code is independent of it. will make write access easier too. this way the
+various Mapi => standards (rfc2822, vcard, etc etc) stuff can be leveraged across the whole thing.
+whether you get a message by Msg.open('filename.msg') or
+Pst.open('filename.pst').find { |msg| msg.subject =~ /blah blah/ }, either way you get a message
+object that can be manipulated the same way. 
+
+mapi property types (from http://msdn2.microsoft.com/en-us/library/bb147591.aspx)
+
+value     mapi name       variant name    description
+-------------------------------------------------------------------------------
+0x0001    PT_NULL         VT_NULL         Null (no valid data)
+0x0002    PT_SHORT        VT_I2           2-byte integer (signed)
+0x0003    PT_LONG         VT_I4           4-byte integer (signed)
+0x0004    PT_FLOAT        VT_R4           4-byte real (floating point)
+0x0005    PT_DOUBLE       VT_R8           8-byte real (floating point)
+0x0006    PT_CURRENCY     VT_CY           8-byte integer (scaled by 10, 000)
+0x000A    PT_ERROR        VT_ERROR        SCODE value; 32-bit unsigned integer
+0x000B    PT_BOOLEAN      VT_BOOL         Boolean
+0x000D    PT_OBJECT       VT_UNKNOWN      Data object
+0x001E/001F    PT_STRING8 VT_BSTR         String
+0x0040    PT_SYSTIME      VT_DATE         8-byte real (date in integer, time in fraction)
+0x0102    PT_BINARY       VT_BLOB         Binary (unknown format)
+0x0102    PT_CLSID        VT_CLSID        OLE GUID
+
+all the values except for the last 2, are the same value as the variant's value it seems.
+
+ole variant types (from http://www.marin.clara.net/COM/variant_type_definitions.htm)
+
+value		variant name
+-------------------------------------------------------------------------------
+0x0000  VT_EMPTY
+0x0001  VT_NULL
+0x0002  VT_I2
+0x0003  VT_I4
+0x0004  VT_R4
+0x0005  VT_R8
+0x0006  VT_CY
+0x0007  VT_DATE
+0x0008  VT_BSTR
+0x0009  VT_DISPATCH
+0x000a  VT_ERROR
+0x000b  VT_BOOL
+0x000c  VT_VARIANT
+0x000d  VT_UNKNOWN
+0x000e  VT_DECIMAL
+0x0010  VT_I1
+0x0011  VT_UI1
+0x0012  VT_UI2
+0x0013  VT_UI4
+0x0014  VT_I8
+0x0015  VT_UI8
+0x0016  VT_INT
+0x0017  VT_UINT
+0x0018  VT_VOID
+0x0019  VT_HRESULT
+0x001a  VT_PTR
+0x001b  VT_SAFEARRAY
+0x001c  VT_CARRAY
+0x001d  VT_USERDEFINED
+0x001e  VT_LPSTR
+0x001f  VT_LPWSTR
+0x0040  VT_FILETIME
+0x0041  VT_BLOB
+0x0042  VT_STREAM
+0x0043  VT_STORAGE
+0x0044  VT_STREAMED_OBJECT
+0x0045  VT_STORED_OBJECT
+0x0046  VT_BLOB_OBJECT
+0x0047  VT_CF
+0x0048  VT_CLSID
+0x0fff  VT_ILLEGALMASKED
+0x0fff  VT_TYPEMASK
+0x1000  VT_VECTOR
+0x2000  VT_ARRAY
+0x4000  VT_BYREF
+0x8000  VT_RESERVED
+0xffff  VT_ILLEGAL
+
+=end
 
 require 'rubygems'
 require 'msg'
 require 'enumerator'
 
 class Pst
-	VERSION = '0.2.0'
-	
+	VERSION = '0.3.0'
+
 	class FormatError < StandardError
 	end
 
@@ -599,6 +700,15 @@ end
 			end
 		end
 
+		class Attachment
+			attr_reader :properties
+			def initialize list
+				@properties = Properties.new list
+			end
+
+			alias props :properties
+		end
+
 		class EntryID < Struct.new(:u1, :entry_id, :id)
 			UNPACK_STR = 'VA16V'
 
@@ -710,8 +820,12 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 		end
 =end
 
+		def attachments_raw
+			BlockParser.new(@desc).parse_attachments
+		end
+
 		def attachments
-			@attachments ||= BlockParser.new(@desc).parse_attachments
+			@attachments ||= attachments_raw.map { |list| Attachment.new list }
 		end
 
 		def method_missing name
@@ -770,7 +884,9 @@ looks like it
 
 		# this stuff could maybe be moved to Ole::Types? or leverage it somehow?
 		IMMEDIATE_TYPES = [0x0002, 0x0003, 0x000b]
-		INDIRECT_TYPES = [0x0005, 0x000d, 0x0014, 0x001e, 0x0040, 0x0048, 0x0102, 0x1003, 0x01014, 0x101e, 0x1102]
+		INDIRECT_TYPES = [
+			0x0005, 0x000d, 0x0014, 0x001e, 0x0040, 0x0048, 0x0102, 0x1003, 0x01014, 0x101e, 0x1102
+		]
 
 		attr_reader :desc, :data, :index_data, :type, :index_offset, :offset1
 		def initialize desc
@@ -824,7 +940,7 @@ looks like it
 			signature, offset2 = header_data2.unpack 'V2'
 			raise FormatError, 'unhandled block signature 0x%08x' % type if signature != 0x000204b5
 			@data2 = get_data_indirect offset2
-			@num_recs = @data2.length / 6
+			@num_recs = (@data2.length / 6.0).ceil
 			@data3 = get_data_indirect ind2_offset
 
 	
@@ -839,7 +955,23 @@ looks like it
 			# make a fake desc.
 			require 'ostruct'
 			desc2 = OpenStruct.new :desc => idx, :pst => desc.pst, :list_index => desc.list_index
-			BlockParser.new(desc2).to_a
+			# fixme seriously.
+			attachments = [BlockParser.new(desc2).to_a]
+			attachments.map do |attachment|
+				if attachment_id2 = attachment.assoc(0x67f2)
+					idx = desc.pst.idx_from_id desc.pst.pst_getID2(idx2, attachment_id2.last)
+					desc2.desc = idx
+					BlockParser.new(desc2).to_a.each do |a, b, c|
+						record = attachment.assoc a
+						unless record
+							attachment << record = []
+						end
+						record.replace [a, b, c]
+						#puts "0x%04x 0x%04x %p" % [a, b, c]
+					end
+				end
+				attachment
+			end
 		end
 
 		def each
@@ -853,30 +985,36 @@ looks like it
 					elsif @type == 2
 						unpack = 'v3cc'
 						begin
-							ref_type, type, ind2_off, size, slot = @index_data[10 * list, 10].unpack(unpack)
+							ref_type, type, ind2_off, size, slot = @index_data[8 * list, 8].unpack(unpack)
 						rescue
 							next
 						end
 						value = @data3[ind2_off, size] rescue nil
-						next if value == nil
-						if INDIRECT_TYPES.include? ref_type
+						value_orig = value
+#						if INDIRECT_TYPES.include? ref_type
+						if size <= 4
 							value = value.unpack('V')[0]
 						end
-						p ['0x%04x' % type, (Msg::Properties::MAPITAGS['%04x' % type].first[/^.._(.*)/, 1].downcase rescue nil),
-								ref_type, value, (get_data_indirect(value) rescue nil), size, ind2_off, slot]
+						#p ['0x%04x' % ref_type, '0x%04x' % type, (Msg::Properties::MAPITAGS['%04x' % type].first[/^.._(.*)/, 1].downcase rescue nil),
+						#		value_orig, value, (get_data_indirect(value) rescue nil), size, ind2_off, slot]
 					end
 
 					case ref_type
-					when 0x002c, 0x001c, 0x0038, 0x67f2, 0x0004
-						# ignore
-						next
 					when 0x000b
 						value = value != 0
+					when 0x000d
+						raise
 					when *IMMEDIATE_TYPES # not including 0x000b which we just did
 						# the value is actually the value....
 					when *INDIRECT_TYPES
 						# the value is a pointer
-						value = get_data_indirect(value) rescue next
+						#p '0x%04x %04x' % [type, ref_type]
+						begin
+							value = get_data_indirect(value)
+						rescue 
+							puts $!
+							value = nil
+						end
 						# special subject handling
 						if type == PR_SUBJECT
 							ignore, offset = value.unpack 'C2'
@@ -940,7 +1078,7 @@ looks like it
 		idx = idx_from_id pst_getID2(id2_head, id2)
 		#p [id2, id2_head, idx]
 		if (idx.id & 0x2) == 0
-			p idx
+			#p idx
 			idx.read
 		else
 			#warn 'weird compile id thing not handled yet'
@@ -1102,7 +1240,7 @@ if $0 == __FILE__
 			assert_equal 'Personal Folders', pst.name
 			assert_equal 47, pst.idx.length
 			assert_equal 34, pst.desc.length
-			assert_equal 3, pst.root_item.children # trash, message, search
+			assert_equal 3, pst.root_item.children.length # trash, message, search
 		end
 
 		def test_message_properties
@@ -1152,9 +1290,53 @@ if $0 == __FILE__
 			# check hashes have the same keys
 			assert_equal expected_properties.keys.sort_by { |k| k.to_s }, message.props.to_h.keys.sort_by { |k| k.to_s }
 			# assert each component is equal. this is for easier to read failures.
-			expected_properties.each { |key, value| assert_equal value, message.props[key], "#{key} property" }
+			expected_properties.each { |key, value| assert_equal value, message.props[key], "#{key} message property" }
 
-			p message.attachments
+			assert_equal 1, message.attachments.length
+			attachment = message.attachments.first
+			expected_properties = {
+				# these are probably bugs. shouldn't have nils.
+				:attach_content_location => nil,
+				:attach_content_id => nil,
+				:attach_long_pathname => nil,
+				:attach_tag => nil,
+				:attach_additional_info => nil,
+				:attach_mime_tag => nil,
+				:attach_pathname => nil,
+
+				# bools
+				:attachment_hidden => false,
+
+				# numbers
+				:attach_method => 1,
+				:attach_flags => 0,
+				:attachment_linkid => 0,
+				:attach_size => 14589,
+				:attachment_flags => 0,
+				:rendering_position => 4294967295,
+
+				# strings
+				:attach_extension => '.txt',
+				:display_name => 'x.txt',
+				:attach_long_filename => 'x.txt',
+				:attach_filename => 'x.txt',
+
+				# should be changed to not be a string.
+				:attach_data => "012346789\r\n" * 1000,
+				:attach_rendering => /.*/, # just ignore this. 
+				:attach_encoding => nil,
+				:creation_time => "\034s\345zX\024\310\001",
+				:exception_endtime => "\000@\335\243WE\263\f",
+				:exception_starttime => "\000@\335\243WE\263\f",
+				:last_modification_time => "\034s\345zX\024\310\001",
+			}
+
+			# check hashes have the same keys
+			assert_equal expected_properties.keys.sort_by { |k| k.to_s }, attachment.props.to_h.keys.sort_by { |k| k.to_s }
+			# assert each component is equal. this is for easier to read failures.
+			expected_properties.each do |key, value|
+				send "assert_#{Regexp === value ? :match : :equal}", value, attachment.props[key], "#{key} attachment property" 
+			end
 		end
 	end
 end
