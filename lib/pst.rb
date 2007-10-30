@@ -208,33 +208,54 @@ class Pst
 		# these are the constants defined in libpst.c, that
 		# are referenced in pst_open()
 		INDEX_TYPE_OFFSET = 0x0A
-		ENC_OFFSET = 0x1CD
 		FILE_SIZE_POINTER = 0xA8
 		FILE_SIZE_POINTER_64 = 0xB8
-		INDEX_POINTER = 0xC4
-		INDEX_POINTER_64 = 0xF0
 		SECOND_POINTER = 0xBC
+		INDEX_POINTER = 0xC4
 		SECOND_POINTER_64 = 0xE0
+		INDEX_POINTER_64 = 0xF0
+		ENC_OFFSET = 0x1CD
 
 		attr_reader :magic, :index_type, :encrypt_type, :size
 		attr_reader :index1_count, :index1, :index2_count, :index2
+		attr_reader :version
 		def initialize data
 			@magic = data.unpack('N')[0]
 			@index_type = data[INDEX_TYPE_OFFSET]
-			@encrypt_type = data[ENC_OFFSET]
+			@version = @index_type == 0xe ? 1997 : 2003
 
-			@index2_count, @index2 = data[SECOND_POINTER - 4, 8].unpack('V2')
-			@index1_count, @index1 = data[INDEX_POINTER  - 4, 8].unpack('V2')
+			if version_2003?
+				# don't know?
+				@encrypt_type = 0
 
-			@size = data[FILE_SIZE_POINTER, 4].unpack('V')[0]
+				@index2_count, @index2 = data[SECOND_POINTER_64 - 4, 8].unpack('V2')
+				@index1_count, @index1 = data[INDEX_POINTER_64  - 4, 8].unpack('V2')
+
+				@size = data[FILE_SIZE_POINTER_64, 4].unpack('V')[0]
+			else
+				@encrypt_type = data[ENC_OFFSET]
+
+				@index2_count, @index2 = data[SECOND_POINTER - 4, 8].unpack('V2')
+				@index1_count, @index1 = data[INDEX_POINTER  - 4, 8].unpack('V2')
+
+				@size = data[FILE_SIZE_POINTER, 4].unpack('V')[0]
+			end
 
 			validate!
 		end
 
+		def version_2003?
+			version == 2003
+		end
+
+		def encrypted?
+			encrypt_type != 0
+		end
+
 		def validate!
-			raise FormatError, "bad signature on pst file (#{'0x%x' % @magic})" unless @magic == MAGIC
-			raise FormatError, "only index type 0xe is handled (#{'0x%x' % @index_type})" unless @index_type == 0x0e
-			raise FormatError, "only encrytion types 0 and 1 are handled (#{@encrypt_type.inspect})" unless [0, 1].include?(@encrypt_type)
+			raise FormatError, "bad signature on pst file (#{'0x%x' % magic})" unless magic == MAGIC
+			raise FormatError, "only index types 0xe and 0x17 are handled (#{'0x%x' % index_type})" unless [0x0e, 0x17].include?(index_type)
+			raise FormatError, "only encrytion types 0 and 1 are handled (#{encrypt_type.inspect})" unless [0, 1].include?(encrypt_type)
 		end
 	end
 
@@ -346,7 +367,7 @@ class Pst
 	end
 
 	def encrypted?
-		@header.encrypt_type != 0
+		@header.encrypted?
 	end
 
 	#
@@ -1627,6 +1648,13 @@ end
  #<struct Pst::Index id=304, offset=100224, size=5142, u1=2>, <- body_html part 2
  #<struct Pst::Index id=328, offset=105408, size=8180, u1=2>, <- body part 1
  #<struct Pst::Index id=336, offset=113600, size=2825, u1=2>] <- body part 2
+
+# there is no Q that is always little endian, so use 2 V each
+# 24 chunks
+blocks.map do |s|
+	id, size, offset = s.unpack('V6').to_enum(:each_slice, 2).map { |low, high| low + (high << 32) }
+end
+^ 64 bit values.
 
 =end
 
