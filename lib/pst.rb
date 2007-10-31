@@ -1,5 +1,13 @@
 #! /usr/bin/ruby
 
+# plural to String#index
+class String
+	def indexes string
+		# in some ways i'm surprised that $~ works properly in this case...
+		to_enum(:scan, /#{Regexp.quote string}/m).map { $~.begin 0 }
+	end
+end
+
 #
 # = Introduction
 #
@@ -12,36 +20,163 @@
 #
 # = TODO
 # 
+# 0. massive refactoring and cleaning up, now that the main stuff is supported.
 # 1. xattribs
-# 1.5 io streams like ruby-msg, with set of encoding / decoding functions.
-# 1.75 fix the usage of Mapi:: stuff.
-# 2. better tests
-# 3. use tests to isolate any more of the encrypt vs non-encrypt issues, try and understand the & 1
-#    & 2 stuff etc.
+# 2. solve recipient table problem (test4).
+# 3. generalise the Mapi stuff better
 # 4. refactor index load
-# 5. cleanup general. try to rationalise the code.
-# 6. eml extraction - compare accuracy.
-# 6.5 msg serialization.
-# 7. outlook 2003
+# 5. msg serialization?
+# 6. outlook 2003
 #
-
-# restruct msg project to share more code. eg, perhaps something like:
-# of course this is inverted at the moment, but msg will be changed transparently to pst
-# to fix that. 
 
 require 'rubygems'
 require 'msg'
 require 'enumerator'
 require 'ostruct'
 
+# move this stuff to ruby-ole.
+module Ole
+	module Types
+		#
+		# The OLE variant types, extracted from
+		# http://www.marin.clara.net/COM/variant_type_definitions.htm.
+		#
+		# A subset is also in WIN32OLE::VARIANT, but its not cross platform (obviously).
+		#
+		# Use like:
+		#
+		#   p Ole::Types::Variant::NAMES[0x001f] => 'VT_LPWSTR'
+		#   p Ole::Types::VT_DATE # => 7
+		#
+		# The serialization / deserialization functions should be fixed to make it easier
+		# to work with. like
+		#
+		#   Ole::Types.from_str(VT_DATE, data) # and
+		#   Ole::Types.to_str(VT_DATE, data)
+		#
+		# Or similar, rather than having to do VT_* <=> ad hoc class name etc as it is
+		# currently.
+		#
+		module Variant
+			NAMES = {
+				0x0000 => 'VT_EMPTY',
+				0x0001 => 'VT_NULL',
+				0x0002 => 'VT_I2',
+				0x0003 => 'VT_I4',
+				0x0004 => 'VT_R4',
+				0x0005 => 'VT_R8',
+				0x0006 => 'VT_CY',
+				0x0007 => 'VT_DATE',
+				0x0008 => 'VT_BSTR',
+				0x0009 => 'VT_DISPATCH',
+				0x000a => 'VT_ERROR',
+				0x000b => 'VT_BOOL',
+				0x000c => 'VT_VARIANT',
+				0x000d => 'VT_UNKNOWN',
+				0x000e => 'VT_DECIMAL',
+				0x0010 => 'VT_I1',
+				0x0011 => 'VT_UI1',
+				0x0012 => 'VT_UI2',
+				0x0013 => 'VT_UI4',
+				0x0014 => 'VT_I8',
+				0x0015 => 'VT_UI8',
+				0x0016 => 'VT_INT',
+				0x0017 => 'VT_UINT',
+				0x0018 => 'VT_VOID',
+				0x0019 => 'VT_HRESULT',
+				0x001a => 'VT_PTR',
+				0x001b => 'VT_SAFEARRAY',
+				0x001c => 'VT_CARRAY',
+				0x001d => 'VT_USERDEFINED',
+				0x001e => 'VT_LPSTR',
+				0x001f => 'VT_LPWSTR',
+				0x0040 => 'VT_FILETIME',
+				0x0041 => 'VT_BLOB',
+				0x0042 => 'VT_STREAM',
+				0x0043 => 'VT_STORAGE',
+				0x0044 => 'VT_STREAMED_OBJECT',
+				0x0045 => 'VT_STORED_OBJECT',
+				0x0046 => 'VT_BLOB_OBJECT',
+				0x0047 => 'VT_CF',
+				0x0048 => 'VT_CLSID',
+				0x0fff => 'VT_ILLEGALMASKED',
+				0x0fff => 'VT_TYPEMASK',
+				0x1000 => 'VT_VECTOR',
+				0x2000 => 'VT_ARRAY',
+				0x4000 => 'VT_BYREF',
+				0x8000 => 'VT_RESERVED',
+				0xffff => 'VT_ILLEGAL'
+			}
+
+			module Constants
+				NAMES.each { |num, name| const_set name, num }
+			end
+		end
+
+		include Variant::Constants
+	end
+end
+
 module Mapi
+	module Types
+		#
+		# Mapi property types, taken from http://msdn2.microsoft.com/en-us/library/bb147591.aspx.
+		#
+		# The fields are [mapi name, variant name, description]
+		#
+		# seen some synonyms here, like PT_I8 vs PT_LONG. seen stuff like PT_SRESTRICTION, not
+		# sure what that is. look at `grep ' PT_' data/mapitags.yaml  | sort -u`
+		# also, it has stuff like PT_MV_BINARY, where _MV_ probably means multi value, and is
+		# likely just defined to | in 0x1000.
+		#
+		# Note that the last 2 are the only ones where the Mapi value differs from the Variant value
+		# for the corresponding variant type. Odd. Also, the last 2 are currently commented out here
+		# because of the clash.
+		#
+		# Note 2 - the strings here say VT_BSTR, but I don't have that defined in Ole::Types. Should
+		# maybe change them to match. I've also seen reference to PT_TSTRING, which is defined as some
+		# sort of get unicode first, and fallback to ansii or something.
+		#
+		DATA = {
+			0x0001 => ['PT_NULL', 'VT_NULL', 'Null (no valid data)'],
+			0x0002 => ['PT_SHORT', 'VT_I2', '2-byte integer (signed)'],
+			0x0003 => ['PT_LONG', 'VT_I4', '4-byte integer (signed)'],
+			0x0004 => ['PT_FLOAT', 'VT_R4', '4-byte real (floating point)'],
+			0x0005 => ['PT_DOUBLE', 'VT_R8', '8-byte real (floating point)'],
+			0x0006 => ['PT_CURRENCY', 'VT_CY', '8-byte integer (scaled by 10,000)'],
+			0x000a => ['PT_ERROR', 'VT_ERROR', 'SCODE value; 32-bit unsigned integer'],
+			0x000b => ['PT_BOOLEAN', 'VT_BOOL', 'Boolean'],
+			0x000d => ['PT_OBJECT', 'VT_UNKNOWN', 'Data object'],
+			0x001e => ['PT_STRING8', 'VT_BSTR', 'String'],
+			0x001f => ['PT_UNICODE', 'VT_BSTR', 'String'],
+			0x0040 => ['PT_SYSTIME', 'VT_DATE', '8-byte real (date in integer, time in fraction)'],
+			#0x0102 => ['PT_BINARY', 'VT_BLOB', 'Binary (unknown format)'],
+			#0x0102 => ['PT_CLSID', 'VT_CLSID', 'OLE GUID']
+		}
+
+		module Constants
+			DATA.each { |num, (mapi_name, variant_name, desc)| const_set mapi_name, num }
+		end
+
+		include Constants
+	end
+
+	# FIXME this stuff below.
+	# restruct msg project to share more code. eg, perhaps something like:
+	# of course this is inverted at the moment, but msg will be changed transparently to pst
+	# to fix that. 
+
 	class PropertyStore < Msg::Properties
 		TAGS = MAPITAGS
 	end
 
+	# IMessage essentially, but there's also stuff like IMAPIFolder etc. so, for this to form
+	# basis for PST Item, it'd need to be more general.
 	class Item < Msg
+		# IAttach
 		class Attachment < Msg::Attachment
 		end
+
 
 		class Recipient < Recipient
 		end
@@ -58,119 +193,8 @@ module Mapi
 	end
 end
 
-=begin
-
-Mapi::Pst.open('myfile.pst') do |pst|
-	message = pst.find { |item| item.type == :message }
-	message.class # Mapi::Pst::Item
-	message.props # Mapi::Pst::PropertyStorage
-	message.storage # => :pst
-	p message.attachments.first
-	message.to_mime
-end
-
-Mapi::Msg.open('myfile.msg') do |pst|
-	message = pst.find { |item| item.type == :message }
-	message.class # Mapi::Msg::Item
-	message.storage # => :msg
-	p message.recipients.first
-	message.to_mime
-end
-
-# what about saving the pst to msg files:
-
-Mapi::Pst.open 'myfile.pst' do |pst|
-	pst.each_with_index do |item, i|
-		# this will be the first cut of msg serialization. serialize an arbitrary
-		# Mapi::Item, whether from a pst or not, to an '.msg' file. independent of propertystore
-		# class etc.
-		item.to_msg "item_#{i}.msg"
-	end
-end
-
-where Mapi::Pst and ::Msg are just some sort of generalised property store style backends, and the
-majority of the message code is independent of it. will make write access easier too. this way the
-various Mapi => standards (rfc2822, vcard, etc etc) stuff can be leveraged across the whole thing.
-whether you get a message by Msg.open('filename.msg') or
-Pst.open('filename.pst').find { |msg| msg.subject =~ /blah blah/ }, either way you get a message
-object that can be manipulated the same way. 
-
-mapi property types (from http://msdn2.microsoft.com/en-us/library/bb147591.aspx)
-
-value     mapi name       variant name    description
--------------------------------------------------------------------------------
-0x0001    PT_NULL         VT_NULL         Null (no valid data)
-0x0002    PT_SHORT        VT_I2           2-byte integer (signed)
-0x0003    PT_LONG         VT_I4           4-byte integer (signed)
-0x0004    PT_FLOAT        VT_R4           4-byte real (floating point)
-0x0005    PT_DOUBLE       VT_R8           8-byte real (floating point)
-0x0006    PT_CURRENCY     VT_CY           8-byte integer (scaled by 10, 000)
-0x000A    PT_ERROR        VT_ERROR        SCODE value; 32-bit unsigned integer
-0x000B    PT_BOOLEAN      VT_BOOL         Boolean
-0x000D    PT_OBJECT       VT_UNKNOWN      Data object
-0x001E/001F    PT_STRING8 VT_BSTR         String
-0x0040    PT_SYSTIME      VT_DATE         8-byte real (date in integer, time in fraction)
-0x0102    PT_BINARY       VT_BLOB         Binary (unknown format)
-0x0102    PT_CLSID        VT_CLSID        OLE GUID
-
-all the values except for the last 2, are the same value as the variant's value it seems.
-
-ole variant types (from http://www.marin.clara.net/COM/variant_type_definitions.htm)
-
-value		variant name
--------------------------------------------------------------------------------
-0x0000  VT_EMPTY
-0x0001  VT_NULL
-0x0002  VT_I2
-0x0003  VT_I4
-0x0004  VT_R4
-0x0005  VT_R8
-0x0006  VT_CY
-0x0007  VT_DATE
-0x0008  VT_BSTR
-0x0009  VT_DISPATCH
-0x000a  VT_ERROR
-0x000b  VT_BOOL
-0x000c  VT_VARIANT
-0x000d  VT_UNKNOWN
-0x000e  VT_DECIMAL
-0x0010  VT_I1
-0x0011  VT_UI1
-0x0012  VT_UI2
-0x0013  VT_UI4
-0x0014  VT_I8
-0x0015  VT_UI8
-0x0016  VT_INT
-0x0017  VT_UINT
-0x0018  VT_VOID
-0x0019  VT_HRESULT
-0x001a  VT_PTR
-0x001b  VT_SAFEARRAY
-0x001c  VT_CARRAY
-0x001d  VT_USERDEFINED
-0x001e  VT_LPSTR
-0x001f  VT_LPWSTR
-0x0040  VT_FILETIME
-0x0041  VT_BLOB
-0x0042  VT_STREAM
-0x0043  VT_STORAGE
-0x0044  VT_STREAMED_OBJECT
-0x0045  VT_STORED_OBJECT
-0x0046  VT_BLOB_OBJECT
-0x0047  VT_CF
-0x0048  VT_CLSID
-0x0fff  VT_ILLEGALMASKED
-0x0fff  VT_TYPEMASK
-0x1000  VT_VECTOR
-0x2000  VT_ARRAY
-0x4000  VT_BYREF
-0x8000  VT_RESERVED
-0xffff  VT_ILLEGAL
-
-=end
-
 class Pst
-	VERSION = '0.5.0'
+	VERSION = '0.6.0'
 
 	class FormatError < StandardError
 	end
@@ -383,10 +407,6 @@ class Pst
 
 	# these 3 classes are used to hold various file records
 
-	# i think the max size is 8192. i'm not sure how bigger
-	# items are serialized. somehow, they are serialized as a table that lists a
-	# bunch of ids. 
-	#
 	# pst_index
 	class Index < Struct.new(:id, :offset, :size, :u1)
 		UNPACK_STR = 'VVvv'
@@ -399,6 +419,60 @@ class Pst
 			super(*data.unpack(UNPACK_STR))
 		end
 
+		def type
+			@type ||= begin
+				if id & 0x2 == 0
+					:data
+				else
+					first_byte, second_byte = read.unpack('CC')
+					if first_byte == 1
+						raise second_byte unless second_byte == 1
+						:data_chain_header
+					elsif first_byte == 2
+						raise second_byte unless second_byte == 0
+						:id2_assoc
+					else
+						raise FormatError, 'unknown first byte for block - %p' % first_byte
+					end
+				end
+			end
+		end
+
+		def data?
+			(id & 0x2) == 0
+		end
+
+		def read decrypt=true
+			# only data blocks are every encrypted
+			decrypt = false unless data?
+			pst.pst_read_block_size offset, size, decrypt
+		end
+
+		# show all numbers in hex
+		def inspect
+			super.gsub(/=(\d+)/) { '=0x%x' % $1.to_i }.sub(/Index /, "Index type=#{type.inspect}, ")
+		end
+	end
+
+	# mostly guesses.
+	ITEM_COUNT_OFFSET_64 = 0x1e8
+	LEVEL_INDICATOR_OFFSET_64 = 0x1eb # diff of 3 between these 2 as above...
+
+	# will maybe inherit from Index64, in order to get the same #type function.
+	class Index64 < Struct.new(:id, :offset, :size, :u1, :u2)
+		UNPACK_STR = 'V4vvV'
+		SIZE = 24
+		BLOCK_SIZE = 512
+		COUNT_MAX = 20 # bit of a guess really. 512 / 24 = 21, but doesn't leave enough header room
+
+		attr_accessor :pst
+		def initialize data
+			a = data.unpack(UNPACK_STR)
+			# 64 bit numbers
+			a[0, 4] = a[0, 4].to_enum(:each_slice, 2).map { |low, high| low + (high << 32) }
+			super(*a)
+		end
+
 		def read decrypt=true
 			# don't decrypt odd ids??. wait, that'd be & 1. this is weirder.
 			# my tests fail without this line, so whatever its doing is important.
@@ -406,9 +480,120 @@ class Pst
 			pst.pst_read_block_size offset, size, decrypt
 		end
 
-		# show all numbers in hex
-		def inspect
-			super.gsub(/=(\d+)/) { '=0x%x' % $1.to_i }
+		def self.load_chain io, header
+			load_idx_rec io, header.index1, 0, 0
+		end
+
+		# almost identical to load code for Index, just different offsets and unpack strings.
+		# can probably merge them, or write a generic load_tree function or something.
+		def self.load_idx_rec io, offset, linku1, start_val
+			io.seek offset
+			buf = io.read BLOCK_SIZE
+			idxs = []
+
+			item_count = buf[ITEM_COUNT_OFFSET_64]
+			raise "have too many active items in index (#{item_count})" if item_count > COUNT_MAX
+
+			#idx = Index.new buf[BACKLINK_OFFSET, Index::SIZE]
+			#raise 'blah 1' unless idx.id == linku1
+
+			if buf[LEVEL_INDICATOR_OFFSET_64] == 0
+				# leaf pointers
+				# split the data into item_count index objects
+				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
+					idx = new data
+					# first entry
+					raise 'blah 3' if i == 0 and start_val != 0 and idx.id != start_val
+					#idx.pst = self
+					break if idx.id == 0
+					idxs << idx
+				end
+			else
+				# node pointers
+				# split the data into item_count table pointers
+				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
+					start, u1, offset = data.unpack('V6').to_enum(:each_slice, 2).map { |low, high| low + (high << 32) }
+					# for the first value, we expect the start to be equal
+					raise 'blah 3' if i == 0 and start_val != 0 and start != start_val
+					break if start == 0
+					idxs += load_idx_rec io, offset, u1, start
+				end
+			end
+
+			idxs
+		end
+	end
+
+	# pst_desc
+	class Desc64 < Struct.new(:desc_id, :idx_id, :idx2_id, :parent_desc_id, :u2)
+		UNPACK_STR = 'V2V2V2VV'
+		SIZE = 32
+		BLOCK_SIZE = 512 # descriptor blocks was 520 but bogus
+		COUNT_MAX = 15 # guess as per Index64
+
+		include ToTree
+
+		attr_accessor :pst
+		attr_reader :children
+		def initialize data
+			a = data.unpack(UNPACK_STR)
+			# 64 bit numbers
+			a[0, 6] = a[0, 6].to_enum(:each_slice, 2).map { |low, high| low + (high << 32) }
+			super(*a)
+			@children = []
+		end
+
+		def desc
+			pst.idx_from_id idx_id
+		end
+
+		def list_index
+			pst.idx_from_id idx2_id
+		end
+
+		def self.load_chain io, header
+			load_desc_rec io, header.index2, 0, 0x21
+		end
+
+		def self.load_desc_rec io, offset, linku1, start_val
+			io.seek offset
+			buf = io.read BLOCK_SIZE
+			descs = []
+			item_count = buf[ITEM_COUNT_OFFSET_64]
+
+			# not real desc
+			#desc = Desc.new buf[BACKLINK_OFFSET, 4]
+			#raise 'blah 1' unless desc.desc_id == linku1
+
+			if buf[LEVEL_INDICATOR_OFFSET_64] == 0
+				# leaf pointers
+				raise "have too many active items in index (#{item_count})" if item_count > COUNT_MAX
+				# split the data into item_count desc objects
+				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
+					desc = new data
+					# first entry
+					raise 'blah 3' if i == 0 and start_val != 0 and desc.desc_id != start_val
+					break if desc.desc_id == 0
+					descs << desc
+				end
+			else
+				# node pointers
+				raise "have too many active items in index (#{item_count})" if item_count > Index64::COUNT_MAX
+				# split the data into item_count table pointers
+				buf[0, Index64::SIZE * item_count].scan(/.{#{Index64::SIZE}}/mo).each_with_index do |data, i|
+					start, u1, offset = data.unpack('V6').to_enum(:each_slice, 2).map { |low, high| low + (high << 32) }
+					# for the first value, we expect the start to be equal note that ids -1, so even for the
+					# first we expect it to be equal. thats the 0x21 (dec 33) desc record. this means we assert
+					# that the first desc record is always 33...
+					# thats because 0x21 is the pst root itself...
+					raise 'blah 3' if i == 0 and start_val != -1 and start != start_val
+					# this shouldn't really happen i'd imagine
+					break if start == 0
+					descs += load_desc_rec io, offset, u1, start
+				end
+			end
+
+			descs
 		end
 	end
 
@@ -424,6 +609,9 @@ class Pst
 	end
 
 	# pst_desc
+	# idx_id is a pointer to an idx record which gets the primary data stream for the Desc record.
+	# idx2_id gets you an idx record, that when read gives you an ID2 association list, which just maps
+	# another set of ids to index values
 	class Desc < Struct.new(:desc_id, :idx_id, :idx2_id, :parent_desc_id)
 		UNPACK_STR = 'V4'
 		SIZE = 16
@@ -458,7 +646,12 @@ class Pst
 	def load_idx
 		@idx = []
 		@idx_offsets = []
-		load_idx_rec header.index1, header.index1_count, 0
+		if header.version_2003?
+			@idx = Index64.load_chain io, header
+			@idx.each { |idx| idx.pst = self }
+		else
+			load_idx_rec header.index1, header.index1_count, 0
+		end
 
 		# we'll typically be accessing by id, so create a hash as a lookup cache
 		@idx_from_id = {}
@@ -476,7 +669,7 @@ class Pst
 		@idx_offsets << offset
 
 		#_pst_read_block_size(pf, offset, BLOCK_SIZE, &buf, 0, 0) < BLOCK_SIZE)
-		buf = pst_read_block_size offset, Index::BLOCK_SIZE, false, false 
+		buf = pst_read_block_size offset, Index::BLOCK_SIZE, false
 
 		item_count = buf[ITEM_COUNT_OFFSET]
 		raise "have too many active items in index (#{item_count})" if item_count > Index::COUNT_MAX
@@ -524,7 +717,12 @@ class Pst
 	def load_desc
 		@desc = []
 		@desc_offsets = []
-		load_desc_rec header.index2, header.index2_count, 0x21
+		if header.version_2003?
+			@desc = Desc64.load_chain io, header
+			@desc.each { |desc| desc.pst = self }
+		else
+			load_desc_rec header.index2, header.index2_count, 0x21
+		end
 
 		# first create a lookup cache
 		@desc_from_id = {}
@@ -565,7 +763,7 @@ class Pst
 	def load_desc_rec offset, linku1, start_val
 		@desc_offsets << offset
 		
-		buf = pst_read_block_size offset, Desc::BLOCK_SIZE, false, false
+		buf = pst_read_block_size offset, Desc::BLOCK_SIZE, false
 		item_count = buf[ITEM_COUNT_OFFSET]
 
 		# not real desc
@@ -590,7 +788,9 @@ class Pst
 			# split the data into item_count table pointers
 			buf[0, TablePtr::SIZE * item_count].scan(/.{#{TablePtr::SIZE}}/mo).each_with_index do |data, i|
 				table = TablePtr.new data
-				# for the first value, we expect the start to be equal
+				# for the first value, we expect the start to be equal note that ids -1, so even for the
+				# first we expect it to be equal. thats the 0x21 (dec 33) desc record. this means we assert
+				# that the first desc record is always 33...
 				raise 'blah 3' if i == 0 and start_val != -1 and table.start != start_val
 				# this shouldn't really happen i'd imagine
 				break if table.start == 0
@@ -629,17 +829,10 @@ class Pst
 	# * _pst_read_block ??
 	# * _pst_ff_getIDblock_dec ??
 	# * _pst_ff_getIDblock ??
-	def pst_read_block_size offset, size, decrypt=true, is_index=false
+	def pst_read_block_size offset, size, decrypt=true
 		io.seek offset
 		buf = io.read size
 		warn "tried to read #{size} bytes but only got #{buf.length}" if buf.length != size
-
-		if is_index and buf[0] == 0x01 and buf[1] == 0x00
-			warn "not doing weird index stuff..."
-			# FIXME what was going on here. and what is the real difference between this
-			# function, and all the _ff_read block functions. and what's the deal with the & 1 and & 2 stuff.
-		end
-
 		encrypted? && decrypt ? CompressibleEncryption.decrypt(buf) : buf
 	end
 
@@ -658,14 +851,66 @@ class Pst
 		end
 	end
 
+	class ID2Assoc64 < Struct.new(:id2, :u1, :id, :table2)
+		UNPACK_STR = 'VVV2V2'
+		SIZE = 24
+
+		def initialize data
+			if String === data
+				data = data.unpack UNPACK_STR
+				data[2, 4] = data[2, 4].to_enum(:each_slice, 2).map { |low, high| low + (high << 32) }
+			end
+			super(*data)
+		end
+
+		def self.load_chain idx
+			buf = idx.read
+			type, count = buf.unpack 'v2'
+			unless type == 0x0002
+				raise 'unknown id2 type 0x%04x' % type
+				#return
+			end
+			id2 = []
+			count.times do |i|
+				assoc = new buf[8 + SIZE * i, SIZE]
+				id2 << assoc
+				if assoc.table2 != 0
+					id2 += load_chain idx.pst.idx_from_id(assoc.table2)
+				end
+			end
+			id2
+		end
+	end
+
+	class ID2Mapping
+		attr_reader :list
+		def initialize pst, list
+			@pst = pst
+			@list = list
+		end
+
+		# corresponds to:
+		# * _pst_getID2
+		def [] id
+			id2 = @list.find { |x| x.id2 == id }
+			id2 and @pst.idx_from_id(id2.id)
+		end
+	end
+
 	def load_idx2 idx
-		load_idx2_rec idx
+		if header.version_2003?
+			id2 = ID2Assoc64.load_chain idx
+		else
+			id2 = load_idx2_rec idx
+		end
+		ID2Mapping.new self, id2
 	end
 
 	# corresponds to
 	# * _pst_build_id2
 	def load_idx2_rec idx
-		buf = pst_read_block_size idx.offset, idx.size, false, false
+		# i should perhaps use a idx chain style read here?
+		buf = pst_read_block_size idx.offset, idx.size, false
 		type, count = buf.unpack 'v2'
 		unless type == 0x0002
 			raise 'unknown id2 type 0x%04x' % type
@@ -698,8 +943,8 @@ class Pst
 	end
 
 	class RangesIOID2 < RangesIOIdxChain
-		def self.new pst, id2, id2_head
-			RangesIOIdxChain.new pst, pst.idx_from_id(pst.pst_getID2(id2_head, id2))
+		def self.new pst, id2, idx2
+			RangesIOIdxChain.new pst, idx2[id2]
 		end
 	end
 
@@ -718,22 +963,18 @@ class Pst
 				return [idx]
 			end
 			# there are 4 unaccounted for bytes here, 4...8
-			ids = buf[8, count * 4].unpack('V*')
+			if header.version_2003?
+				ids = buf[8, count * 8].unpack('V*').
+					to_enum(:each_slice, 2).map { |low, high| low + (high << 32) }
+			else
+				ids = buf[8, count * 4].unpack('V*')
+			end
 			if fdepth == 1
 				ids.map { |id| idx_from_id id }
 			else
-				ids.map { |id| pst_getID2block_idxs_rec id }.flatten
+				ids.map { |id| id2_block_idx_chain idx_from_id(id) }.flatten
 			end
 		end
-	end
-
-	# id2 is the array of id2assoc. id is the id2 value we're looking for
-	#
-	# corresponds to:
-	# * _pst_getID2
-	def pst_getID2 id2, id
-		id2 = id2.find { |x| x.id2 == id }
-		id2 and id2.id
 	end
 
 	#
@@ -748,19 +989,40 @@ class Pst
 	# * _pst_parse_block
 	# * _pst_process (in some ways. although perhaps thats more the Item::Properties#add_property)
 	class BlockParser
+		include Mapi::Types::Constants
+
 		TYPES = {
 			0xbcec => 1,
 			0x7cec => 2,
-			#0x0101 => 3
+			# type 3 is removed. an artifact of not handling the indirect blocks properly in libpst.
 		}
 
 		PR_SUBJECT = Msg::Properties::MAPITAGS.find { |num, (name, type)| name == 'PR_SUBJECT' }.first.hex
 		PR_BODY_HTML = Msg::Properties::MAPITAGS.find { |num, (name, type)| name == 'PR_BODY_HTML' }.first.hex
 
 		# this stuff could maybe be moved to Ole::Types? or leverage it somehow?
-		IMMEDIATE_TYPES = [0x0002, 0x0003, 0x000b]
+		# whether or not a type is immeidate is more a property of the pst encoding though i expect.
+		# what i probably can add is a generic concept of whether a type is of variadic length or not.
+
+		# these lists are very incomplete. think they are largely copied from libpst
+
+		IMMEDIATE_TYPES = [
+			PT_SHORT, PT_LONG, PT_BOOLEAN
+		]
+
 		INDIRECT_TYPES = [
-			0x0005, 0x000d, 0x0014, 0x001e, 0x0040, 0x0048, 0x0102, 0x1003, 0x01014, 0x101e, 0x1102
+			PT_DOUBLE, PT_OBJECT,
+			0x0014, # whats this? probably something like PT_LONGLONG, given the correspondence with the
+							# ole variant types. (= VT_I8)
+			PT_STRING8, PT_UNICODE, # unicode isn't in libpst, but added here for outlook 2003 down the track
+			PT_SYSTIME,
+			0x0048, # another unknown
+			0x0102, # this is PT_BINARY vs PT_CLSID
+			#0x1003, # these are vector types, but they're commented out for now because i'd expect that
+			#0x1014, # there's extra decoding needed that i'm not doing. (probably just need a simple
+			#        # PT_* => unpack string mapping for the immediate types, and just do unpack('V*') etc
+			#0x101e,
+			#0x1102
 		]
 
 		# the attachment and recipient arrays appear to be always stored with these fixed
@@ -776,12 +1038,47 @@ class Pst
 			@desc = desc
 			#@data = desc.desc.read
 			if Pst::Index === desc.desc
-				@data = RangesIOIdxChain.new(desc.pst, desc.desc).read
+				#@data = RangesIOIdxChain.new(desc.pst, desc.desc).read
+				idxs = desc.pst.id2_block_idx_chain desc.desc
+				# this gets me the plain index chain.
 			else
 				# fake desc
-				@data = desc.desc.read
+				#@data = desc.desc.read
+				idxs = [desc.desc]
 			end
+
+			@data_chunks = idxs.map { |idx| idx.read }
+			@data = @data_chunks.first
+			$data_chunks = @data_chunks
+
 			load_header
+
+			@index_offsets = [@index_offset] + @data_chunks[1..-1].map { |chunk| chunk.unpack('v')[0] }
+			@offset_tables = []
+			@ignored = []
+			@data_chunks.zip(@index_offsets).each do |chunk, offset|
+				ignore = chunk[offset, 2].unpack('v')[0]
+				@ignored << ignore
+				p ignore
+				@offset_tables.push offset_table = []
+				# maybe its ok if there aren't to be any values ?
+				raise FormatError if offset == 0
+				offsets = chunk[offset + 2..-1].unpack('v*')
+				#p offsets
+				offsets[0, ignore + 2].each_cons 2 do |from, to|
+					#next if to == 0
+					raise FormatError, [from, to].inspect if from > to
+					offset_table << [from, to]
+				end
+			end
+
+			@offset_table = @offset_tables.first
+			@idxs = idxs
+
+			# now, we may have multiple different blocks
+			if idxs.length > 1
+				#raise 'multiple'
+			end
 		end
 
 		# a given desc record may or may not have associated idx2 data. we lazily load it here, so it will never
@@ -795,25 +1092,6 @@ class Pst
 
 		def load_header
 			@index_offset, type, @offset1 = data.unpack 'vvV'
-=begin
-			# not a real type. the 0x0101 is for a nested idx.
-			if !TYPES[type] and @index_offset == 0x0101
-				# libpst doesn't really handle this case properly, it just reads and discards the data.
-				warn "parsing block type 3!!!! offset1 = 0x%04x" % @offset1 # <- want to see if this value is constant.
-				# offset1 values: 0x3a5c
-				# apparently, type will actually be a count of records. check that
-				# hmm, it appears that it is used for RawPropertyStoreTable, where the count is high. eg, for
-				# the recipients, i had a message with 41 recipients, and it triggered this. perhaps any time when
-				# the block is going to be too big in some fashion.
-				expect = (data.length - 8) / 4
-				warn "expected type field to be #{expect}, but got #{type}" if type != expect
-				@data = data[8, 4 * type].unpack('V*').map { |id| desc.pst.idx_from_id(id).read }.join
-				$data = @data
-				$obj = self
-				# this doesn't seem to work quite right yet
-				return load_header
-			end
-=end
 			raise FormatError, 'unknown block type signature 0x%04x' % type unless TYPES[type]
 			@type = TYPES[type]
 		end
@@ -826,47 +1104,81 @@ class Pst
 		# * _pst_getBlockOffsetPointer
 		# * _pst_getBlockOffset
 		def get_data_indirect offset
+			return get_data_indirect_io(offset).read
+
 			if offset == 0
 				nil
 			elsif (offset & 0xf) == 0xf
-				#warn "id2 value unhandled"
-				#warn 'called into id2 part of getBlockOffsetPointer but id2 undefined' unless idx2
-				#desc.pst.pst_getID2block offset, idx2
-				#nil
 				RangesIOID2.new(desc.pst, offset, idx2).read
 			else
 				low, high = offset & 0xf, offset >> 4
-				raise FormatError if @index_offset == 0 or low != 0 or @index_offset + 2 + high + 4 > data.length
-				from, to = data[@index_offset + 2 + high, 4].unpack 'v2'
-				raise FormatError if from > to
+				raise FormatError if low != 0 or (high & 0x1) != 0 or (high / 2) > @offset_table.length
+				from, to = @offset_table[high / 2]
 				data[from...to]
+			end
+		end
+
+		def get_data_indirect_io offset
+			if offset == 0
+				nil
+			elsif (offset & 0xf) == 0xf
+				if idx2[offset]
+					RangesIOID2.new desc.pst, offset, idx2
+				else
+					warn "tried to get idx2 record for #{offset} but failed"
+					return StringIO.new('')
+				end
+			else
+				low, high = offset & 0xf, offset >> 4
+				if low != 0 or (high & 0x1) != 0
+#				raise FormatError, 
+					warn "bad - #{low} #{high} (1)" 
+					return StringIO.new('')
+				end
+				# lets see which block it should come from.
+				block_idx, i = high.divmod 4096
+				unless block_idx < @data_chunks.length
+					warn "bad - block_idx to high (not #{block_idx} < #{@data_chunks.length})"
+					return StringIO.new('')
+				end
+				data_chunk, offset_table = @data_chunks[block_idx], @offset_tables[block_idx]
+				if i / 2 >= offset_table.length
+					warn "bad - #{low} #{high} - #{i / 2} >= #{offset_table.length} (2)"
+					return StringIO.new('')
+				end
+				warn "ok  - #{low} #{high} #{offset_table.length}"
+				from, to = offset_table[i / 2]
+				StringIO.new data_chunk[from...to]
 			end
 		end
 
 		def handle_indirect_values key, type, value
 			case type
-			when 0x000b
+			when PT_BOOLEAN
 				value = value != 0
-			when *IMMEDIATE_TYPES # not including 0x000b which we just did
-				# the value is actually the value....
+			when *IMMEDIATE_TYPES # not including PT_BOOLEAN which we just did above
+				# no processing current applied (needed?).
 			when *INDIRECT_TYPES
 				# the value is a pointer
-				#p '0x%04x %04x' % [type, ref_type]
-				#begin
 				if String === value # ie, value size > 4 above
 					value = StringIO.new value
 				else
 					value = get_data_indirect_io(value)
 				end
-				value = value.read if value and type == 0x001e or type == 0x001f
-				#rescue 
-				#	puts $!
-				#	value = :novalue
-				#end
+				# keep strings as immediate values for now, for compatability with how i set up
+				# Msg::Properties::ENCODINGS
+				if value
+					if type == PT_STRING8
+						value = value.read
+					elsif type == PT_UNICODE
+						value = Ole::Types::FROM_UTF16.iconv value.read
+					end
+				end
 				# special subject handling
 				if key == PR_BODY_HTML and value
 					# to keep the msg code happy, which thinks body_html will be an io
-					value = StringIO.new value
+					# although, in 2003 version, they are 0102 already
+					value = StringIO.new value unless value.respond_to?(:read)
 				end
 				if key == PR_SUBJECT and value
 					ignore, offset = value.unpack 'C2'
@@ -911,7 +1223,7 @@ looks like it
 				# special handling for embedded objects
 				# used for attach_data for attached messages. in which case attach_method should == 5,
 				# for embedded object.
-				if type == 0x000d and value
+				if type == PT_OBJECT and value
 					value = value.read if value.respond_to?(:read)
 					id2, unknown = value.unpack 'V2'
 					io = RangesIOID2.new desc.pst, id2, idx2
@@ -920,52 +1232,93 @@ looks like it
 					desc2 = OpenStruct.new(:desc => io, :pst => desc.pst, :list_index => desc.list_index, :children => [])
 					# put nil instead of desc.list_index, otherwise the attachment is attached to itself ad infinitum.
 					# should try and fix that FIXME
-					value = Item.new desc2, RawPropertyStore.new(desc2).to_a
-					desc2.list_index = nil
+					# this shouldn't be done always. for an attached message, yes, but for an attached
+					# meta file, for example, it shouldn't. difference between embedded_ole vs embedded_msg
+					# really.
+					# note that in the case where its a embedded ole, you actually get a regular serialized ole
+					# object, so i need to create an ole storage object on a rangesioidxchain!
+					# eg:
+=begin
+att.props.display_name # => "Picture (Metafile)"
+io = att.props.attach_data
+io.read(32).unpack('H*') # => ["d0cf11e0a1b11ae100000.... note the docfile signature.
+# plug some missing rangesio holes:
+def io.rewind; seek 0; end
+def io.flush; raise IOError; end
+ole = Ole::Storage.open io
+puts ole.root.to_tree
+
+- #<Dirent:"Root Entry">
+  |- #<Dirent:"\001Ole" size=20 data="\001\000\000\002\000...">
+  |- #<Dirent:"CONTENTS" size=65696 data="\327\315\306\232\000...">
+  \- #<Dirent:"\003MailStream" size=12 data="\001\000\000\000[...">
+=end
+					# until properly fixed, i have disabled this code here, so this will break
+					# nested messages temporarily.
+					#value = Item.new desc2, RawPropertyStore.new(desc2).to_a
+					#desc2.list_index = nil
+					value = io
 				end
+			# this is PT_MV_STRING8, i guess.
+			# should probably have the 0x1000 flag, and do the or-ring.
+			# example of 0x1102 is PR_OUTLOOK_2003_ENTRYIDS. less sure about that one.
+			when 0x101e, 0x1102 
+				# example data:
+				# 0x802b "\003\000\000\000\020\000\000\000\030\000\000\000#\000\000\000BusinessCompetitionFavorites"
+				# this 0x802b would be an extended attribute for categories / keywords.
+				value = get_data_indirect_io(value).read unless String === value
+				num = value.unpack('V')[0]
+				offsets = value[4, 4 * num].unpack("V#{num}")
+				value = (offsets + [value.length]).to_enum(:each_cons, 2).map { |from, to| value[from...to] }
+				value.map! { |str| StringIO.new str } if type == 0x1102
 			else
-				# unhandled
-				raise FormatError, 'unsupported ref_type %04x' % ref_type
+				name = Mapi::Types::DATA[type].first rescue nil
+				warn '0x%04x %p' % [key, get_data_indirect_io(value).read]
+				raise NotImplementedError, 'unsupported mapi property type - 0x%04x (%p)' % [type, name]
 			end
 			[key, type, value]
-		end
-
-		def get_data_indirect_io offset
-			if offset == 0
-				nil
-			elsif (offset & 0xf) == 0xf
-				#warn "id2 value unhandled"
-				#warn 'called into id2 part of getBlockOffsetPointer but id2 undefined' unless idx2
-				#desc.pst.pst_getID2block offset, idx2
-				#nil
-				RangesIOID2.new desc.pst, offset, idx2
-			else
-				low, high = offset & 0xf, offset >> 4
-				raise FormatError if @index_offset == 0 or low != 0 or @index_offset + 2 + high + 4 > data.length
-				from, to = data[@index_offset + 2 + high, 4].unpack 'v2'
-				raise FormatError if from > to
-				StringIO.new data[from...to]
-			end
 		end
 	end
 
 =begin
-Two items that currently break attachments and recipients
-
 * recipients:
 
 	affects: ["0x200764", "0x2011c4", "0x201b24", "0x201b44", "0x201ba4", "0x201c24", "0x201cc4", "0x202504"]
 
-* attachments:
+after adding the rawpropertystoretable fix, all except the second parse properly, and satisfy:
 
-	this is just from the 0x000d object
-	fixed now
+  item.props.display_to == item.recipients.map { |r| r.props.display_name if r.props.recipient_type == 1 }.compact * '; '
+
+only the second still has a problem
+
+#[#<struct Pst::Desc desc_id=0x2011c4, idx_id=0x397c, idx2_id=0x398a, parent_desc_id=0x8082>]
+
+think this is related to a multi block #data3. ie, when you use @x * rec_size, and it
+goes > 8190, or there abouts, then it stuffs up. probably there is header gunk, or something,
+similar to when #data is multi block.
+
+same problem affects the attachment table in test4. 
+
+fixed that issue. round data3 ranges to rec_size. 
+
+fix other issue with attached objects.
+
+all recipients and attachments in test2 are fine.
+
+only remaining issue is test4 recipients of 200044. strange.
 
 =end
 
 	# RawPropertyStore is used to iterate through the properties of an item, or the auxiliary
 	# data for an attachment. its just a parser for the way the properties are serialized, when the
 	# properties don't have to conform to a column structure.
+	#
+	# structure of this chunk of data is often
+	#   header, property keys, data values, and then indexes.
+	# the property keys has value in it. value can be the actual value if its a short type,
+	# otherwise you lookup the value in the indicies, where you get the offsets to use in the
+	# main data body. due to the indirect thing though, any of these parts could actually come
+	# from a separate stream.
 	class RawPropertyStore < BlockParser
 		include Enumerable
 
@@ -980,7 +1333,8 @@ Two items that currently break attachments and recipients
 			header_data = get_data_indirect @offset1
 			raise FormatError if header_data.length < 8
 			signature, offset2 = header_data.unpack 'V2'
-			raise FormatError, 'unhandled block signature 0x%08x' % type if signature != 0x000602b5
+			#p [@type, signature]
+			raise FormatError, 'unhandled block signature 0x%08x' % @type if signature != 0x000602b5
 			# this is actually a big chunk of tag tuples.
 			@index_data = get_data_indirect offset2
 			@length = @index_data.length / 8
@@ -1022,23 +1376,36 @@ Two items that currently break attachments and recipients
 			header_data2 = get_data_indirect b_five_offset
 			raise FormatError if header_data2.length < 8
 			signature, offset2 = header_data2.unpack 'V2'
-			raise FormatError, 'unhandled block signature 0x%08x' % type if signature != 0x000204b5
+			# ??? seems a bit iffy
+			expect = desc.pst.header.version_2003? ? 0x000404b5 : 0x000204b5
+			raise FormatError, 'unhandled block signature 0x%08x' % signature if signature != expect
 
 			# this holds all the row data
-			@data3 = get_data_indirect ind2_offset
+			# handle multiple block issue.
+			@data3_io = get_data_indirect_io ind2_offset
+			if RangesIOIdxChain === @data3_io
+				@data3_idxs = 
+				# modify ranges
+				ranges = @data3_io.ranges.map { |offset, size| [offset, size / @rec_size * @rec_size] }
+				@data3_io.instance_variable_set :@ranges, ranges
+			end
+			@data3 = @data3_io.read
 
 			# there must be something to the data in data2. i think data2 is the array of objects essentially.
 			# currently its only used to imply a length
-			@data2 = get_data_indirect offset2
-			if data2
-				@length = (data2.length / 6.0).ceil
-			else
+			@data2 = get_data_indirect(offset2) rescue nil
+			#if data2
+			#	@length = (data2.length / 6.0).ceil
+			#else
+			# the above / 6, may have been ok for 97 files, but the new 0x0004 style block must have
+			# different size records... just use this instead:
 				# hmmm, actually, we can still figure it out:
 				@length = @data3.length / @rec_size
-			end
+			#end
 		end
 
 		def [] idx
+			# handle funky rounding
 			Row.new self, idx * @rec_size
 		end
 
@@ -1083,8 +1450,7 @@ Two items that currently break attachments and recipients
 			# no super, we only actually want BlockParser2#idx2
 			@table = nil
 			return unless desc.list_index
-			return unless id = desc.pst.pst_getID2(idx2, ID2_ATTACHMENTS)
-			return unless idx = desc.pst.idx_from_id(id)
+			return unless idx = idx2[ID2_ATTACHMENTS]
 			# FIXME make a fake desc.
 			@desc2 = OpenStruct.new :desc => idx, :pst => desc.pst, :list_index => desc.list_index
 			@table = RawPropertyStoreTable.new @desc2
@@ -1094,10 +1460,13 @@ Two items that currently break attachments and recipients
 			return [] if !table
 			table.map do |attachment|
 				attachment = attachment.to_a
+				#p attachment
 				# potentially merge with yet more properties
+				# this still seems pretty broken - especially the property overlap
 				if attachment_id2 = attachment.assoc(PR_ATTACHMENT_ID2)
-					idx = desc.pst.idx_from_id desc.pst.pst_getID2(idx2, attachment_id2.last)
-					@desc2.desc = idx
+					p attachment_id2.last
+					p idx2[attachment_id2.last]
+					@desc2.desc = idx2[attachment_id2.last]
 					RawPropertyStore.new(@desc2).each do |a, b, c|
 						record = attachment.assoc a
 						attachment << record = [] unless record
@@ -1118,8 +1487,7 @@ Two items that currently break attachments and recipients
 			# no super, we only actually want BlockParser2#idx2
 			@table = nil
 			return unless desc.list_index
-			return unless id = desc.pst.pst_getID2(idx2, ID2_RECIPIENTS)
-			return unless idx = desc.pst.idx_from_id(id)
+			return unless idx = idx2[ID2_RECIPIENTS]
 			# FIXME make a fake desc.
 			desc2 = OpenStruct.new :desc => idx, :pst => desc.pst, :list_index => desc.list_index
 			@table = RawPropertyStoreTable.new desc2
@@ -1280,14 +1648,14 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 		end
 
 		def recipients
-			[]
-			#@recipients ||= RecipientTable.new(@desc).to_a.map { |list| Recipient.new list }
+			#[]
+			@recipients ||= RecipientTable.new(@desc).to_a.map { |list| Recipient.new list }
 		end
 
 		def each_recursive(&block)
-			p :self => self
+			#p :self => self
 			children.each do |child|
-				p :child => child
+				#p :child => child
 				block[child]
 				child.each_recursive(&block)
 			end
@@ -1330,14 +1698,14 @@ Looking at the output of this, for blank-o1997.pst, i see this part:
 
 which confirms my belief that the block size for idx and desc is more likely 512
 =end
-		if 0 + 0 == 1
+		if 0 + 0 == 0
 			puts '* file range usage'
 			file_ranges =
 				# these 3 things, should account for most of the data in the file.
 				[[0, Header::SIZE, 'pst file header']] +
 				@idx_offsets.map { |offset| [offset, Index::BLOCK_SIZE, 'idx block data'] } +
 				@desc_offsets.map { |offset| [offset, Desc::BLOCK_SIZE, 'desc block data'] } +
-				@idx.map { |idx| [idx.offset, idx.size, 'data for idx id=0x%x' % idx.id] }
+				@idx.map { |idx| [idx.offset, idx.size, 'idx id=0x%x (%s)' % [idx.id, idx.type]] }
 			(file_ranges.sort_by { |idx| idx.first } + [nil]).to_enum(:each_cons, 2).each do |(offset, size, name), next_record|
 				# i think there is a padding of the size out to 64 bytes
 				# which is equivalent to padding out the final offset, because i think the offset is 
@@ -1430,232 +1798,327 @@ which confirms my belief that the block size for idx and desc is more likely 512
 	end
 end
 
-if $0 == __FILE__
-	require 'test/unit'
+__END__
 
-	class TestPst2 < Test::Unit::TestCase
-		attr_reader :pst
-		def setup
-			@io = open 'test2-o1997.pst', 'rb'
-			@pst = Pst.new @io
-		end
+about the recipient table problem:
 
-		def teardown
-			@io.close
-		end
+pst = Pst.new open('test2-o1997.pst')
+desc = pst.desc_from_id(0x200764)
+rt = Pst::RecipientTable.new(desc)
+item = pst.parse_item(desc)
 
-		def test_recipients
-			message = pst.root_item.children.select { |child| child.type == :item }.first
-			recipients = message.recipients
-			assert_equal 3, recipients.length
-		end
+rt.to_a # => raises exception
 
-		# test a particular message
-		def test_message
-			folder = pst.root_item.children.select { |child| child.type == :folder }.first
-			children = folder.children
-			assert_equal 328, children.length
-			sub_folder = folder.children.select { |child| child.type == :folder }.first
-			message = sub_folder.children.last
-			attachment = message.attachments.first
-			# FIXME look into why these are different. which one is correct
-			assert_equal 4086955, attachment.props.attach_size
-			assert_equal 4086712, attachment.props.attach_data.size
-			# the file is spread out in 500 chunks across the pst.
-			# some of those chunks are possibly contiguous though. TODO - implement
-			# optional merging of consecutive ranges in RangesIO.
-			assert_equal 500, attachment.props.attach_data.ranges.length
-		end
+# yes, there are 41 recipients here. looking for search keys:
+rt.table.data.scan(/EX:/).length # => 41
 
-		def test_attached_message
-			message = pst.pst_parse_item pst.desc_from_id(0x205524)
-			assert_equal 1, message.attachments.length
-			attachment = message.attachments.first
-			assert_equal 5, attachment.props.attach_method # embedded object
-			assert_equal Pst::Item, attachment.props.attach_data.class
-			assert_equal 'message/rfc822', attachment.props.attach_mime_tag
-			message2 = attachment.props.attach_data
-			# this should generate an attached email message
-			assert_equal <<-'end', message.to_mime.to_tree
-- #<Mime content_type="multipart/mixed">
-  |- #<Mime content_type="text/plain">
-  \- #<Mime content_type="message/rfc822">
-			end
-		end
-	end
+# can compare it with display_to
+item.props.display_to.split(';').length # => 41
 
-	class TestPst3 < Test::Unit::TestCase
-		attr_reader :pst
-		def setup
-			@io = open 'test3-o1997.pst', 'rb'
-			@pst = Pst.new @io
-		end
+# can parse some of the items though. eg:
+rt.table[0].to_a.assoc(12289).last
 
-		def teardown
-			@io.close
-		end
+So, lets see what happens exactly.
 
-		def test_pst_structure
-			assert_equal 'Personal Folders', pst.name
-			assert_equal 47, pst.idx.length
-			assert_equal 34, pst.desc.length
-			assert_equal 3, pst.root_item.children.length # trash, message, search
-		end
+rt.table[22].to_a.assoc(12289).last # => raises error
+rt.table[21].to_a.assoc(12289).last # => is ok.
 
-		def test_message_properties
-			message = pst.root_item.children[1]
-			expected_properties = {
-				# bools
-				:alternate_recipient_allowed => true,
-				:read_receipt_requested => false,
-				:delete_after_submit => false,
-				:originator_delivery_report_requested => false,
+x = (0..21).map { |i| rt.table[i].to_a.assoc(12289).last }
+# => [...]
 
-				# numbers
-				:priority => 0,
-				:sensitivity => 0,
-				:importance => 1,
-				:internet_cpid => 20127,
-				:action => 4294967295,
-				:message_size => 39974,
-				:message_flags => 25,
-				:profile_offline_store_path => 746,
+y = item.props.display_to.split('; ')
+# => [...]
 
-				# strings
-				:conversation_topic => 'draft message test with attachment',
-				:subject => 'draft message test with attachment',
-				:last_modifier_name => 'Charles Lowe',
-				:message_class => 'IPM.Note',
-				:display_to => 'nobody in particular',
-				:body => "012346789\r\n" * 1000 + "\r\n \r\n",
-				:body_html => "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\">\r\n" \
-											"<HTML><HEAD>\r\n<META http-equiv=Content-Type content=\"text/html; charset=us-ascii\">\r\n" \
-											"<META content=\"MSHTML 6.00.2900.3199\" name=GENERATOR></HEAD>\r\n" \
-											"<BODY><FONT face=Arial \r\nsize=2>" + '012346789<BR>' * 1000 +
-											"</FONT></FONT>\r\n<DIV><FONT face=Arial size=2></FONT>&nbsp;</DIV></BODY></HTML>\r\n",
+x == y[0..21] # => true
 
-				# other
-				# are these entry ids?
-				:predecessor_change_list => "\024R\237\307\010\203\357\331J\265\231[\006s\254\373U\000\000x}",
-				:change_key => "R\237\307\010\203\357\331J\265\231[\006s\254\373U\000\000x}",
-				:search_key=>"PJ\204O\244\225\374N\224\376\3568\347\325\037\230",
-				:sentmail_entryid => "\000\000\000\000\330\t\305\234!\302\vD\263\351\223[\217d;.\001\000\357\372\346\t\270fcL\274X\241\201\322\367\000\306\000\000\001!F\301\000\000",
-				# this will get parsed as a time later.
-				:last_modification_time => "\000\214ahX\024\310\001",
-				:creation_time=>"\000\214ahX\024\310\001",
-				:message_delivery_time => "\300\344J\247X\024\310\001",
-			}
+x = (0..21).map { |i| rt.table[i].to_a.assoc(12299).last.read }
+# => [...]
 
-			# check hashes have the same keys
-			assert_equal expected_properties.keys.sort_by { |k| k.to_s }, message.props.to_h.keys.sort_by { |k| k.to_s }
-			# assert each component is equal. this is for easier to read failures.
-			expected_properties.each do |key, value|
-				got = message.props[key]
-				got = got.read if got.respond_to? :read
-				assert_equal value, got, "#{key} message property"
-			end
+y = rt.table.data.scan(/EX:.*?\x00/)
 
-			assert_equal 1, message.attachments.length
-			attachment = message.attachments.first
-			expected_properties = {
-				# these are probably bugs. shouldn't have nils.
-				:attach_content_location => nil,
-				:attach_content_id => nil,
-				:attach_long_pathname => nil,
-				:attach_tag => nil,
-				:attach_additional_info => nil,
-				:attach_mime_tag => nil,
-				:attach_pathname => nil,
+# another check
 
-				# bools
-				:attachment_hidden => false,
+idx2 = pst.load_idx2 desc.list_index
+idx = idx2[Pst::BlockParser::ID2_RECIPIENTS]
 
-				# numbers
-				:attach_method => 1,
-				:attach_flags => 0,
-				:attachment_linkid => 0,
-				:attach_size => 14589,
-				:attachment_flags => 0,
-				:rendering_position => 4294967295,
 
-				# strings
-				:attach_extension => '.txt',
-				:display_name => 'x.txt',
-				:attach_long_filename => 'x.txt',
-				:attach_filename => 'x.txt',
+another piece of information.
 
-				# should be changed to not be a string.
-				:attach_data => "012346789\r\n" * 1000,
-				:attach_rendering => /.*/, # just ignore this. 
-				:attach_encoding => nil,
-				:creation_time => "\034s\345zX\024\310\001",
-				:exception_endtime => "\000@\335\243WE\263\f",
-				:exception_starttime => "\000@\335\243WE\263\f",
-				:last_modification_time => "\034s\345zX\024\310\001",
-			}
+most of the time, the id2 values used by properties seem to be > 32768.
+so, the unique list of id2 values < that, for test2, is:
 
-			# check hashes have the same keys
-			assert_equal expected_properties.keys.sort_by { |k| k.to_s }, attachment.props.to_h.keys.sort_by { |k| k.to_s }
-			# assert each component is equal. this is for easier to read failures.
-			expected_properties.each do |key, value|
-				got = attachment.props[key]
-				got = got.read if got.respond_to? :read
-				send "assert_#{Regexp === value ? :match : :equal}", value, got, "#{key} attachment property" 
-			end
+[1682, 1649, 63, 12405, 12403, 12411, 12412, 15754, 15762]
+ ^ recip ^ attach
 
-			assert_equal 1, message.recipients.length
-			recipient = message.recipients.first
-			expected_properties = {
-				:"7bit_display_name" => nil,
+only 2 of those are known. 63 is pretty common. only ones where & 0xf == 0xf are
+accessible as property data though
 
-				:responsibility => true,
-				:send_rich_info => true,
 
-				:object_type => 6,
-				:send_internet_encoding => 0,
-				:display_type => 0,
-				:recipient_type => 1,
 
-				:display_name => 'nobody in particular',
-				:email_address => 'nobody@nobody.com',
-				:addrtype => 'SMTP',
-				:search_key => "SMTP:NOBODY@NOBODY.COM\000",
+hmmm, just realised the solution.
 
-				# email address is encoded in here too
-				:entryid => "\000\000\000\000\201+\037\244\276\243\020\031\235n\000\335\001\017T\002\000\000\001\220n\000o\000b\000o\000d\000y\000 \000i\000n\000 \000p\000a\000r\000t\000i\000c\000u\000l\000a\000r\000\000\000S\000M\000T\000P\000\000\000n\000o\000b\000o\000d\000y\000@\000n\000o\000b\000o\000d\000y\000.\000c\000o\000m\000\000\000",
-				:record_key => "\000\000\000\000\201+\037\244\276\243\020\031\235n\000\335\001\017T\002\000\000\001\220n\000o\000b\000o\000d\000y\000 \000i\000n\000 \000p\000a\000r\000t\000i\000c\000u\000l\000a\000r\000\000\000S\000M\000T\000P\000\000\000n\000o\000b\000o\000d\000y\000@\000n\000o\000b\000o\000d\000y\000.\000c\000o\000m\000\000\000",
-			}
+the individual blocks shouldn't be read as one contiguous thing for the merged
+property storage thing.
+the initial 2 bytes are a new index offset for the block, and the indexes should probably
+be read sequentially from that.
 
-			# check hashes have the same keys
-			assert_equal expected_properties.keys.sort_by { |k| k.to_s }, recipient.props.to_h.keys.sort_by { |k| k.to_s }
-			# assert each component is equal. this is for easier to read failures.
-			expected_properties.each do |key, value|
-				got = recipient.props[key]
-				got = got.read if got.respond_to? :read
-				assert_equal value, got, "#{key} recipient property" 
-			end
-		end
-	end
-end
+--------------------
 
-=begin
+pst 2003
 
-* test3-o1997.pst. idx records whose data contains '01234':
+# doing some searches for the offsets of 0x1013 (body html) in both 97 and 03 files:
 
-[#<struct Pst::Index id=240, offset=34112, size=8180, u1=2>,  <- attachment part 1
- #<struct Pst::Index id=248, offset=85568, size=2820, u1=2>,  <- attachment part 2
- #<struct Pst::Index id=296, offset=92032, size=8180, u1=2>,  <- body_html part 1
- #<struct Pst::Index id=304, offset=100224, size=5142, u1=2>, <- body_html part 2
- #<struct Pst::Index id=328, offset=105408, size=8180, u1=2>, <- body part 1
- #<struct Pst::Index id=336, offset=113600, size=2825, u1=2>] <- body part 2
+puts s03[40788 - 16, 64].scan(/.{8}/).map { |s| '0x%04x 0x%04x %08x' % s.unpack('vvV') }
+puts s97[33996 - 16, 64].scan(/.{8}/).map { |s| '0x%04x 0x%04x %08x' % s.unpack('vvV') }
+
+0x0e79 0x0003 00000001
+0x1000 0x001e 0000809f
+0x1013 0x001e 0000807f
+0x1035 0x001e 00000440
+0x1039 0x001e 0000805f
+0x1042 0x001e 00000460
+0x1080 0x0003 00000105
+0x1081 0x0003 00000066
+
+0x0e79 0x0003 00000001
+0x1000 0x001f 0000807f
+0x1013 0x0102 0000805f
+0x1035 0x001f 00000420
+0x1039 0x001f 00000440
+0x1042 0x001f 00000460
+0x1080 0x0003 00000105
+0x1081 0x0003 00000066
+
+note the similarities. in fact the only difference is that the strings are all ascii in the
+97 version. interestingly body html becomes binary instead of a string, which matches the
+unicode psts i've seen. i probably need the mapi property code to handle both.
+
+so, looking at the offsets there, we have (0x420 >> 4) / 2 = 33. so there should be a bunch
+of string properties before that.
+
+>> puts s03b[40788 - 46 * 8...40788 + 48].scan(/.{8}/m).map { |s| '0x%04x 0x%04x %08x' % s.unpack('vvV') }
+0x0002 0x000b 00000001
+0x0017 0x0003 00000001
+0x001a 0x001f 00000040
+0x0023 0x000b 00000000
+0x0026 0x0003 00000000
+0x0029 0x000b 00000000
+0x002b 0x000b 00000000
+0x002e 0x0003 00000000
+0x0036 0x0003 00000000
+0x0037 0x001f 000000e0
+....
+
+
+so sure enough, at 40788 - 46 * 8 = 40420, we have an array of indexes as per RawPropertyStore.
+
+in o97, this would often start at about offset 28 into a block. so
+
+40420 - 28 = 40392, however i don't think thats the case this time.
+
+looking for offsets of 0xbcec:
+
+[24130, 24450, 29186, 29314, 29378, 29506, 29762, 29890, 30594, 31106, 37186,
+40386, 67202, 70018, 101954]
+
+most likely one is 40386.
+
+need to subtract further 2 bytes, then:
+
+so:
+
+desc = OpenStruct.new(:desc => OpenStruct.new(:read => s03b[40384, 8192]))
+Pst::RawPropertyStore.new(desc).each { |*row| p row }
+
+actually gets me some values, though it breaks when it tries to read idx2.
+
+finally, searching for that file offset:
+
+p s03b.to_enum(:scan, /#{Regexp.quote([40384].pack('V'))}/).map { $~.begin(0) }
+
+[18656, 19192, 20072, 20584]
+
+so one of those contains the index tree. 
+
+the other 0x1013's block is at 101952. only it fails to load, because, i think, its part
+of an index chain. 
+
+searching for that number, gives one offset: 24728. that must be in the index data. of
+that chain. it must also be the first record.
+
+this looks like the other idx chain value here:
+
+>> s03b[24728-8, 32].unpack('CCvV*')
+=> [104, 1, 0, 0, 101952, 0, 139248, 0, 364, 0]
+
+if i can get enough samples, i should be able to find my way back to the idx, and then from
+there decode the rest of the file. then, need to find the right way to get to the idx.
+
+
+---------
 
 # there is no Q that is always little endian, so use 2 V each
-# 24 chunks
 blocks.map do |s|
 	id, size, offset = s.unpack('V6').to_enum(:each_slice, 2).map { |low, high| low + (high << 32) }
 end
 ^ 64 bit values.
 
-=end
 
+
+# create a bunch of fake desc from the 0xbcec records
+descs = s03.indexes([0xbcec].pack('v')).map do |offset|
+	OpenStruct.new :offset => offset, :desc => OpenStruct.new(:read => s03[offset - 2, 8192])
+end
+
+# get the display name for each of them
+descs.each do |desc|
+	a = []
+	Pst::RawPropertyStore.new(desc).each { |*r| a << r } rescue nil
+	desc.display_name = (a.assoc(12289).last.delete(0.chr) rescue nil)
+end
+
+# dump that:
+pp descs.map { |desc| [desc.offset, desc.display_name] }
+# =>
+[[24130, "Top of Personal Folders"],
+ [24450, nil],
+ [29186, "SPAM Search Folder 2"],
+ [29314, nil],
+ [29378, "Test folder"],
+ [29506, "Test folder"],
+ [29762, "Search Root"],
+ [29890, "Personal Folders"],
+ [30594, "Deleted Items"],
+ [31106, nil],
+ [37186, nil],
+ [40386, nil],
+ [67202, nil],
+ [70018, nil],
+ [101954, nil]]
+
+that gives us the offsets of a bunch of the idx records, that are also in s97.
+
+lets do a search for all the ones that have names:
+
+>> s03[18752..18900].scan(/.{24}/m).each { |s| p s.unpack('VVvvV*') }
+[24128, 0, 118, 2, 308945680, 232, 0]
+[36352, 0, 328, 2, 308945680, 244, 0]
+[29504, 0, 112, 2, 308945680, 248, 0]
+[30144, 0, 358, 2, 308945680, 248, 0]
+[30144, 0, 358, 2, 308945680, 248, 0]
+[30144, 0, 358, 2, 308945680, 0, 0]
+
+that first one there looks like the matching index record.
+
+2 is probably the same type field from before. one of the other numbers must be size.
+probably the last one, as its probably actually a 64 bit number like the offset is.
+
+stretching to either end gives us:
+
+[33667, 2128360753, 17920, 0, 0, 132, 0]
+[30784, 0, 244, 2, 308945680, 136, 0]
+[31680, 0, 156, 2, 308945680, 144, 0]
+[29056, 0, 4, 2, 308945680, 156, 0]
+[44544, 0, 938, 2, 903156998, 172, 0]
+[45504, 0, 2666, 2, 903156998, 184, 0]
+[48192, 0, 8176, 2, 0, 190, 0]
+[24320, 0, 24, 2, 903156998, 192, 0]
+[56384, 0, 4603, 2, 903156998, 208, 0]
+[37184, 0, 2350, 2, 308945680, 212, 0]
+[40384, 0, 4122, 2, 308945680, 216, 0]
+[61056, 0, 3268, 2, 903122864, 222, 0]
+[23808, 0, 104, 2, 429588796, 224, 0]
+[39552, 0, 774, 2, 308945680, 228, 0]
+[24128, 0, 118, 2, 308945680, 232, 0]
+[36352, 0, 328, 2, 308945680, 244, 0]
+[29504, 0, 112, 2, 308945680, 248, 0]
+[30144, 0, 358, 2, 308945680, 248, 0]
+[30144, 0, 358, 2, 308945680, 248, 0]
+[30144, 0, 358, 2, 308945680, 0, 0]
+
+and based on that, i'd be thinking subtract 8 bytes from the phase, and that number becomes
+the id, and i had id vs size the wrong way, making it:
+
+>> s03[18432, 24 * 19].scan(/.{24}/m).each { |s| p s.unpack('VVVVvvV') }
+[132, 0, 30784, 0, 244, 2, 308945680]
+[136, 0, 31680, 0, 156, 2, 308945680]
+[144, 0, 29056, 0, 4, 2, 308945680]
+[156, 0, 44544, 0, 938, 2, 903156998]
+[172, 0, 45504, 0, 2666, 2, 903156998]
+[184, 0, 48192, 0, 8176, 2, 0]
+[190, 0, 24320, 0, 24, 2, 903156998]
+[192, 0, 56384, 0, 4603, 2, 903156998]
+[208, 0, 37184, 0, 2350, 2, 308945680]
+[212, 0, 40384, 0, 4122, 2, 308945680]
+[216, 0, 61056, 0, 3268, 2, 903122864]
+[222, 0, 23808, 0, 104, 2, 429588796]
+[224, 0, 39552, 0, 774, 2, 308945680]
+[228, 0, 24128, 0, 118, 2, 308945680]
+[232, 0, 36352, 0, 328, 2, 308945680]
+[244, 0, 29504, 0, 112, 2, 308945680]
+[248, 0, 30144, 0, 358, 2, 308945680]
+[248, 0, 30144, 0, 358, 2, 308945680]
+[248, 0, 30144, 0, 358, 2, 308945680]
+
+where we have, probably - 32 bit id, 64 bit offset, 64 bit size, and some mysterious stuff.
+might not be quite right, but its close.
+
+based on this naive header filter:
+s03[0, 512].unpack('V*').select { |i| i > 512 and i < s03.length and i != 1024 and i != 8192 and i != 1028 and i != 32768}
+
+the only numbers that seem to have interesting data are:
+
+28160 and
+27136
+
+interestingly, these correspond to the offsets
+Pst::Header::INDEX_POINTER_64 and
+Pst::Header::SECOND_POINTER_64, so maybe this was already determined in libpst.
+
+hmmm:
+
+s03[Pst::Header::INDEX_POINTER_64, 4].unpack('V')[0] == 27136
+s03[Pst::Header::SECOND_POINTER_64, 4].unpack('V')[0] == 28160
+s03[Pst::Header::FILE_SIZE_POINTER_64, 4].unpack('V')[0] == s03.length == 271360
+
+>> s03[27136, 10 * 19].scan(/.{24}/m).each { |s| p s.unpack('V*') }
+[4, 0, 187, 0, 33280, 0]
+[172, 0, 195, 0, 19968, 0]
+[316, 0, 198, 0, 24576, 0]
+[0, 0, 0, 0, 0, 0]
+...
+
+>> s03[28160, 10 * 19].scan(/.{24}/m).each { |s| p s.unpack('V*') }
+[33, 0, 201, 0, 27648, 0]
+[1612, 0, 184, 0, 21504, 0]
+[32847, 0, 186, 0, 32768, 0]
+[0, 0, 0, 0, 0, 0]
+...
+
+looks like offsets.
+
+>>> s03[33280, 512].scan(/.{24}/m).each { |s| p s.unpack('VVVVvvV*') }
+[4, 0, 22528, 0, 108, 4, 0]
+[8, 0, 22656, 0, 180, 5, 308945680]
+[12, 0, 22912, 0, 172, 6, 308945680]
+[16, 0, 23104, 0, 188, 3, 308945680]
+[20, 0, 23360, 0, 164, 2, 308945680]
+[24, 0, 23552, 0, 100, 2, 308945680]
+[28, 0, 23680, 0, 92, 2, 308945680]
+[36, 0, 23936, 0, 114, 2, 308945680]
+[56, 0, 29184, 0, 104, 2, 308945680]
+[64, 0, 29312, 0, 38, 2, 308945680]
+[76, 0, 24448, 0, 62, 2, 308945680]
+[92, 0, 30592, 0, 140, 2, 308945680]
+[108, 0, 29760, 0, 94, 2, 308945680]
+[116, 0, 29888, 0, 224, 2, 308945680]
+[132, 0, 30784, 0, 244, 2, 308945680]
+[136, 0, 31680, 0, 156, 2, 308945680]
+[144, 0, 29056, 0, 4, 2, 308945680]
+
+...
+
+looks like the index data.
+
+should be able to hash out a Pst::Header, set of functions that works for these.
 
