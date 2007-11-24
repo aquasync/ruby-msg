@@ -22,6 +22,8 @@
 # * Mime was the original place I wrote #to_tree, intended as a quick debug hack.
 #
 class Mime
+	include RecursivelyEnumerable
+
 	Hash = begin
 		require 'orderedhash'
 		OrderedHash
@@ -85,19 +87,8 @@ class Mime
 		"#<Mime content_type=#{@content_type.inspect}>"
 	end
 
-	def to_tree
-		if multipart?
-			str = "- #{inspect}\n"
-			parts.each_with_index do |part, i|
-				last = i == parts.length - 1
-				part.to_tree.split(/\n/).each_with_index do |line, j|
-					str << "  #{last ? (j == 0 ? "\\" : ' ') : '|'}" + line + "\n"
-				end
-			end
-			str
-		else
-			"- #{inspect}\n"
-		end
+	def each_child(&block)
+		parts.each(&block) if multipart?
 	end
 
 	def to_s opts={}

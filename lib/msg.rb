@@ -20,7 +20,7 @@ require 'mime'
 #
 
 class Msg
-	VERSION = '1.3.1'
+	VERSION = '1.3.2'
 	# we look here for the yaml files in data/, and the exe files for support
 	# decoding at the moment.
 	SUPPORT_DIR = File.dirname(__FILE__) + '/..'
@@ -114,7 +114,8 @@ class Msg
 			# i've now seen cases where this stuff is missing, but exists in transport message headers,
 			# so maybe i should inhibit this in that case.
 			if email
-				Log.warn "* no smtp sender email address available (only X.400). creating fake one"
+				# disabling this warning for now
+				#Log.warn "* no smtp sender email address available (only X.400). creating fake one"
 				# this is crap. though i've specially picked the logic so that it generates the correct
 				# email addresses in my case (for my organisation).
 				# this user stuff will give valid email i think, based on alias.
@@ -123,10 +124,12 @@ class Msg
 				headers['From'] = [name ? %{"#{name}" <#{user}@#{domain}>} : "<#{user}@#{domain}>" ]
 			elsif name
 				# we only have a name? thats screwed up.
-				Log.warn "* no smtp sender email address available (only name). creating fake one"
+				# disabling this warning for now
+				#Log.warn "* no smtp sender email address available (only name). creating fake one"
 				headers['From'] = [%{"#{name}"}]
 			else
-				Log.warn "* no sender email address available at all. FIXME"
+				# disabling this warning for now
+				#Log.warn "* no sender email address available at all. FIXME"
 			end
 		# else we leave the transport message header version
 		end

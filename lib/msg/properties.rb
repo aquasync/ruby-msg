@@ -202,7 +202,7 @@ class Msg
 			remaining = obj.children.dup
 			guids_obj, props_obj, names_obj =
 				%w[__substg1.0_00020102 __substg1.0_00030102 __substg1.0_00040102].map do |name|
-					remaining.delete obj[name]
+					remaining.delete obj/name
 				end
 
 			# parse guids
