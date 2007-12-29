@@ -17,7 +17,7 @@ task :default => [:test]
 
 Rake::TestTask.new(:test) do |t|
 	t.test_files = FileList["test/test_*.rb"]
-	t.warning = true
+	t.warning = false
 	t.verbose = true
 end
 
@@ -51,7 +51,7 @@ spec = Gem::Specification.new do |s|
 
 	s.autorequire = 'msg'
 
-	s.add_dependency 'ruby-ole', '>=1.2.1'
+	s.add_dependency 'ruby-ole', '>=1.2.3'
 end
 
 Rake::GemPackageTask.new(spec) do |p|

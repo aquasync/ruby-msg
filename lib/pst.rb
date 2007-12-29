@@ -7,12 +7,14 @@
 #
 # = TODO
 # 
-# 0. massive refactoring and cleaning up, now that the main stuff is supported.
-# 1. xattribs
-# 2. solve recipient table problem (test4).
-# 3. generalise the Mapi stuff better
-# 4. refactor index load
-# 5. msg serialization?
+# 1. solve recipient table problem (test4).
+#    this is done. turns out it was due to id2 clashes. find better solution
+# 2. check parse consistency. an initial conversion of a 30M file to pst, shows
+#    a number of messages conveting badly. compare with libpst too.
+# 3. xattribs
+# 4. generalise the Mapi stuff better
+# 5. refactor index load
+# 6. msg serialization?
 #
 
 =begin
@@ -238,8 +240,9 @@ class Pst
 	end
 
 	class RangesIOEncryptable < RangesIO
-		def initialize io, ranges, opts={}
-			@decrypt = !!opts[:decrypt]
+		def initialize io, mode='r', params={}
+			mode, params = 'r', mode if Hash === mode
+			@decrypt = !!params[:decrypt]
 			super
 		end
 
@@ -880,7 +883,7 @@ class Pst
 			decrypt = decrypts.first
 			# convert idxs to ranges
 			ranges = @idxs.map { |idx| [idx.offset, idx.size] }
-			super pst.io, ranges, :decrypt => decrypt
+			super pst.io, :ranges => ranges, :decrypt => decrypt
 		end
 	end
 

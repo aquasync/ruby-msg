@@ -14,9 +14,11 @@ class TestMime < Test::Unit::TestCase
 		assert_equal 'Body text.', mime.body
 		assert_equal false, mime.multipart?
 		assert_equal nil, mime.parts
-		# we get round trip conversion. this is mostly fluke, as orderedhash hasn't been
-		# added yet
 		assert_equal "Header1: Value1\r\nHeader2: Value2\r\n\r\nBody text.", mime.to_s
+	end
+	
+	def test_boundaries
+		assert_match(/^----_=_NextPart_001_/, Mime.make_boundary(1))
 	end
 end
 

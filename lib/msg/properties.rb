@@ -107,29 +107,45 @@ class Msg
 			:default => proc { |obj| obj.open }
 		}
 
-		# these won't be strings for much longer.
-		# maybe later, the Key#inspect could automatically show symbolic guid names if they
-		# are part of this builtin list.
-		# FIXME. hey, nice that my fake string is the same length though :)
-		PS_MAPI =             '{not-really-sure-what-this-should-say}'
-		PS_PUBLIC_STRINGS =   '{00020329-0000-0000-c000-000000000046}'
-		# string properties in this namespace automatically get added to the internet headers
-		PS_INTERNET_HEADERS = '{00020386-0000-0000-c000-000000000046}'
-		# theres are bunch of outlook ones i think
-		# http://blogs.msdn.com/stephen_griffin/archive/2006/05/10/outlook-2007-beta-documentation-notification-based-indexing-support.aspx
-		# IPM.Appointment
-		PSETID_Appointment =  '{00062002-0000-0000-c000-000000000046}'
-		# IPM.Task
-		PSETID_Task =         '{00062003-0000-0000-c000-000000000046}'
-		# used for IPM.Contact
-		PSETID_Address =      '{00062004-0000-0000-c000-000000000046}'
-		PSETID_Common =       '{00062008-0000-0000-c000-000000000046}'
-		# didn't find a source for this name. it is for IPM.StickyNote
-		PSETID_Note =         '{0006200e-0000-0000-c000-000000000046}'
-		# for IPM.Activity. also called the journal?
-		PSETID_Log =          '{0006200a-0000-0000-c000-000000000046}'
-
 		SUBSTG_RX = /__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?/
+
+		# the property set guid constants
+		# these guids are all defined with the macro DEFINE_OLEGUID in mapiguid.h.
+		# see http://doc.ddart.net/msdn/header/include/mapiguid.h.html
+		oleguid = proc do |prefix|
+			Ole::Types::Clsid.parse "{#{prefix}-0000-0000-c000-000000000046}"
+		end
+
+		NAMES = {
+			oleguid['00020328'] => 'PS_MAPI',
+			oleguid['00020329'] => 'PS_PUBLIC_STRINGS',
+			oleguid['00020380'] => 'PS_ROUTING_EMAIL_ADDRESSES',
+			oleguid['00020381'] => 'PS_ROUTING_ADDRTYPE',
+			oleguid['00020382'] => 'PS_ROUTING_DISPLAY_NAME',
+			oleguid['00020383'] => 'PS_ROUTING_ENTRYID',
+			oleguid['00020384'] => 'PS_ROUTING_SEARCH_KEY',
+			# string properties in this namespace automatically get added to the internet headers
+			oleguid['00020386'] => 'PS_INTERNET_HEADERS',
+			# theres are bunch of outlook ones i think
+			# http://blogs.msdn.com/stephen_griffin/archive/2006/05/10/outlook-2007-beta-documentation-notification-based-indexing-support.aspx
+			# IPM.Appointment
+			oleguid['00062002'] => 'PSETID_Appointment',
+			# IPM.Task
+			oleguid['00062003'] => 'PSETID_Task',
+			# used for IPM.Contact
+			oleguid['00062004'] => 'PSETID_Address',
+			oleguid['00062008'] => 'PSETID_Common',
+			# didn't find a source for this name. it is for IPM.StickyNote
+			oleguid['0006200e'] => 'PSETID_Note',
+			# for IPM.Activity. also called the journal?
+			oleguid['0006200a'] => 'PSETID_Log',
+		}
+
+		module Constants
+			NAMES.each { |guid, name| const_set name, guid }
+		end
+
+		include Constants
 
 		# access the underlying raw property hash
 		attr_reader :raw
@@ -453,6 +469,8 @@ class Msg
 		#
 		# Also contains the code that maps keys to symbolic names.
 		class Key
+			include Constants
+
 			attr_reader :code, :guid
 			def initialize code, guid=PS_MAPI
 				@code, @guid = code, guid
@@ -502,17 +520,21 @@ class Msg
 			alias eql? :==
 
 			def inspect
+				# maybe the way to do this, would be to be able to register guids
+				# in a global lookup, which are used by Clsid#inspect itself, to
+				# provide symbolic names...
+				guid_str = NAMES[guid] || "{#{guid.format}}"
 				if Integer === code
 					hex = '0x%04x' % code
 					if guid == PS_MAPI
 						# just display as plain hex number
 						hex
 					else
-						"#<Key #{guid}/#{hex}>"
+						"#<Key #{guid_str}/#{hex}>"
 					end
 				else
 					# display full guid and code
-					"#<Key #{guid}/#{code.inspect}>"
+					"#<Key #{guid_str}/#{code.inspect}>"
 				end
 			end
 		end

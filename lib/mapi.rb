@@ -1,5 +1,47 @@
 require 'msg'
 
+=begin
+
+Mapi::PropertyStore
+Mapi::Item
+Mapi::Attachment
+Mapi::Recipient
+
+Pst::PropertyStore < Mapi::PropertyStore
+Msg::PropertyStore < Mapi::PropertyStore
+
+# simple hash like api. can be lazily loaded. however if you
+# use something like #keys, or #values, then you'd probably
+# just cache things. maybe this would be the raw interface, 
+# which is wrapped by something which provides named access.
+class Mapi::PropertyStore
+	def initialize symbolic=true
+		@symbolic = symbolic
+	end
+
+	def raw
+		# gives access to the real property store object. the top level
+		# wrapped one uses symbolic naming. 
+		self.class.new false
+	end
+
+	def each symbolic=@symbolic
+		# iterate through the key value pairs. keys are
+		# Mapi::PropertyStore::Key instances, which allows for named
+		# properties. values are of the appropriate class (which is
+		# what?). 
+	end
+
+	def []
+		# get a value based on a key
+	end
+
+	def to_h symbolic=@symbolic
+	end
+end
+
+=end
+
 module Mapi
 	module Types
 		#

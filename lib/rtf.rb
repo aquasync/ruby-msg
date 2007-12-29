@@ -1,5 +1,3 @@
-#! /usr/bin/ruby -w
-
 require 'stringio'
 
 # this file is pretty crap, its just to ensure there is always something readable if
@@ -107,12 +105,5 @@ module RTF
 			text
 		end
 	end
-end
-
-if $0 == __FILE__
-	#str = File.read('test.rtf')
-	str = YAML.load(open('rtfs.yaml'))[2]
-	#puts str
-	puts text
 end
 

@@ -1,7 +1,3 @@
-#! /usr/bin/ruby
-
-$: << File.dirname(__FILE__)
-
 require 'yaml'
 require 'base64'
 
@@ -34,10 +30,15 @@ class Msg
 	# Alternate constructor, to create an +Msg+ directly from +arg+ and +mode+, passed
 	# directly to Ole::Storage (ie either filename or seekable IO object).
 	def self.open arg, mode=nil
-		msg = Msg.new Ole::Storage.open(arg, mode).root
+		msg = new Ole::Storage.open(arg, mode).root
 		# we will close the ole when we are #closed
 		msg.close_parent = true
-		msg
+		if block_given?
+			begin   yield msg
+			ensure; msg.close
+			end
+		else msg
+		end
 	end
 
 	# Create an Msg from +root+, an <tt>Ole::Storage::Dirent</tt> object
@@ -162,7 +163,7 @@ class Msg
 			time = nil unless Date === time
 			# can employ other methods for getting a time. heres one in a similar vein to msgconvert.pl,
 			# ie taking the time from an ole object
-			time ||= @root.ole.dirents.map(&:time).compact.sort.last
+			time ||= @root.ole.dirents.map { |dirent| dirent.modify_time || dirent.create_time }.compact.sort.last
 
 			# now convert and store
 			# this is a little funky. not sure about time zone stuff either?
@@ -508,18 +509,5 @@ class Msg
 			"#<#{self.class.to_s[/\w+$/]}:#{self.to_s.inspect}>"
 		end
 	end
-end
-
-if $0 == __FILE__
-	quiet = if ARGV[0] == '-q'
-		ARGV.shift
-		true
-	end
-	# just shut up and convert a message to eml
-	Msg::Log.level = Logger::WARN
-	Msg::Log.level = Logger::FATAL if quiet
-	msg = Msg.open ARGV[0]
-	puts msg.to_mime.to_s
-	msg.close
 end
 

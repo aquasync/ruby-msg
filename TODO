@@ -1,48 +1,10 @@
-= Ole
-
-* support for shrinking the bats. sbat and bbat can grow to accomodate more data,
-  but they can't shrink yet. at least they should be cropped so that all trailing
-  AVAIL are removed at save time, then re-padded to block boundary.
-  (solved by truncated_table ???)
-* similarly, at close/save time, we should truncate the parent io file.
-* wipe-out with 0's on truncation time not yet done (save on junk).
-* handle including bat information in the bat itself (increasingly important)
-  (partial support)
-* how to handle a small block file getting bigger than threshold, or big block
-  file getting smaller than it?? when you start writing to an empty file, it
-  should be sbat by rights, but then it gets past a certain point, and we have
-  to transparently map that 4096 bytes to a bbat file and keep going??? seems
-  incredibly messy, and will cause a lot of churn in the allocation tables.
-  neater solution???
-  maybe handle it at close time somehow? all new chains are bbat, and then get
-  migrated to sbat at close time? might be less expensive.
-  "solution" for now: buffering. IO.copy buffer is 4096. increase this, to 
-  8192, then its bigger than default migration threshold (4096), so first
-  write to unallocated file moves it directly to bbat with no sbat involvement.
-  if you do smaller writes, you will end up claiming a lot of sbat blocks,
-  and move to bbat later. buffering would help too, but i'll rely on IO.copy
-  for now.
-  (bat migration implemented)
-* when all the above is implemented, we'll allow cheaper edits that our current
-  complete-rewrite approach, but they'll be messier. so, support a repack function.
-  it opens a temporary file, completely copies @io to it, opens it as a Storage
-  object, truncates @io, resets things like initialize would (clean header etc).
-  then it does a Dirent#copy on the 2 roots to provide a clean version.
-  thus:
-  
-  Ole::Storage.open 'myfile.doc', 'r+', &:repack
-  
-  would be a simple ole file cleaner.
-
-* then test & cleanup.
-
 = Newer Msg
 
 * fix nameid handling for sub Properties objects. needs to inherit top-level @nameid.
 
 * better handling for "Untitled Attachments", or attachments with no filename at all.
   maybe better handling in general for attached messages. maybe re-write filename with
-	subject.
+  subject.
 
 * do the above 2, then go for a new release.
   for this release, i want it to be pretty robust, and have better packaging.
@@ -52,16 +14,16 @@
   submit to the usual gem repositories etc, announce project as usable.
 
 * better handling for other types of embedded ole attachments. try to recognise .wmf to
-	start with. etc. 2 goals, form .eml, and for .rtf output.
+  start with. etc. 2 goals, form .eml, and for .rtf output.
 
 * rtf to text support, initially. just simple strip all the crap out approach. maybe html
-	later on. sometimes the only body is rtf, which is problematic. is rtf an allowed body
-	type?
+  later on. sometimes the only body is rtf, which is problematic. is rtf an allowed body
+  type?
 
 * better encoding support (i'm thinking, check some things like m-dash in the non-wide
-	string type. is it windows codepage?. how to know code page in general? change
-	ENCODER[] to convert these to utf8 i think). I'm trying to just move everything to utf8.
-	then i need to make sure the mime side of that holds up.
+  string type. is it windows codepage?. how to know code page in general? change
+  ENCODER[] to convert these to utf8 i think). I'm trying to just move everything to utf8.
+  then i need to make sure the mime side of that holds up.
 
 * certain parsing still not correct, especially small properties directory, 
   things like bools, multiavlue shorts etc.

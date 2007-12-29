@@ -1,3 +1,7 @@
+# need RecursivelyEnumerable
+require 'rubygems'
+require 'ole/support'
+
 #
 # = Introduction
 #
