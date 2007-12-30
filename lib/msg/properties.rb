@@ -239,16 +239,16 @@ class Msg
 			# not sure about any of this stuff really.
 			# should flip a few bits in the real msg, to get a better understanding of how this works.
 			props = props_obj.read.scan(/.{8}/m).map do |str|
-				flags, offset = str[4..-1].unpack 'S2'
+				flags, offset = str[4..-1].unpack 'v2'
 				# the property will be serialised as this pseudo property, mapping it to this named property
 				pseudo_prop = 0x8000 + offset
 				named = flags & 1 == 1
 				prop = if named
-					str_off = *str.unpack('L')
-					len = *names_data[str_off, 4].unpack('L')
+					str_off = *str.unpack('V')
+					len = *names_data[str_off, 4].unpack('V')
 					Ole::Types::FROM_UTF16.iconv names_data[str_off + 4, len]
 				else
-					a, b = str.unpack('S2')
+					a, b = str.unpack('v2')
 					Log.debug "b not 0" if b != 0
 					a
 				end
@@ -275,7 +275,7 @@ class Msg
 					# equal to the lengths of all the sub parts. gives an implied array size i suppose.
 					# maybe you can initialize the array at this time. the sizes are the same as all the
 					# ole object sizes anyway, its to pre-allocate i suppose.
-					#p obj.data.unpack('L*')
+					#p obj.data.unpack('V*')
 					# ignore this one
 					return
 				else
@@ -305,7 +305,7 @@ class Msg
 				Log.warn "padding was not as expected #{pad} (#{data.length}) -> #{data[0...pad].inspect}"
 			end
 			data[pad..-1].scan(/.{16}/m).each do |data|
-				property, encoding = ('%08x' % data.unpack('L')).scan /.{4}/
+				property, encoding = ('%08x' % data.unpack('V')).scan /.{4}/
 				key = property.hex
 				# doesn't make any sense to me. probably because its a serialization of some internal
 				# outlook structure...
@@ -316,12 +316,12 @@ class Msg
 					# multivalue versions ignored also
 				when '0003' # long
 					# don't know what all the other data is for
-					add_property key, *data[8, 4].unpack('L')
+					add_property key, *data[8, 4].unpack('V')
 				when '000b' # boolean
 					# again, heaps more data than needed. and its not always 0 or 1.
 					# they are in fact quite big numbers. this is wrong.
 #					p [property, data[4..-1].unpack('H*')[0]]
-					add_property key, data[8, 4].unpack('L')[0] != 0
+					add_property key, data[8, 4].unpack('V')[0] != 0
 				when '0040' # systime
 					# seems to work:
 					add_property key, Ole::Types.load_time(data[8..-1])
@@ -459,7 +459,10 @@ class Msg
 			@body_html = (self[:body_html].read rescue nil)
 			@body_html = (Msg::RTF.rtf2html body_rtf rescue nil) if !@body_html or @body_html.strip.empty?
 			# last resort
-			@body_html = (::RTF::Converter.rtf2text body_rtf, :html rescue nil) if !@body_html or @body_html.strip.empty?
+			if !@body_html or @body_html.strip.empty?
+				Log.warn 'creating html body from rtf'
+				@body_html = (::RTF::Converter.rtf2text body_rtf, :html rescue nil)
+			end
 			@body_html
 		end
 

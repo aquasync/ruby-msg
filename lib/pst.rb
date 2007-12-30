@@ -829,6 +829,7 @@ class Pst
 				# NOTE we take the last value seen value if there are duplicates. this "fixes"
 				# test4-o1997.pst for the time being.
 				warn "there are duplicate id2 records with id #{id2.id2}" if @id_from_id2[id2.id2]
+				next if @id_from_id2[id2.id2]
 				@id_from_id2[id2.id2] = id2.id
 			end
 		end

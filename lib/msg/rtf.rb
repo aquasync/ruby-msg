@@ -1,7 +1,7 @@
 require 'stringio'
 require 'strscan'
 
-require 'rtf.rb'
+require 'rtf'
 
 class Msg
 	#
@@ -35,7 +35,7 @@ class Msg
 			rtf = ''
 
 			# get header fields (as defined in RTFLIB.H)
-			compr_size, uncompr_size, magic, crc32 = io.read(16).unpack 'L*'
+			compr_size, uncompr_size, magic, crc32 = io.read(16).unpack 'V*'
 			#warn "compressed-RTF data size mismatch" unless io.size == data.compr_size + 4
 
 			# process the data
@@ -46,7 +46,6 @@ class Msg
 				flag_count = -1
 				flags = nil
 				while rtf.length < uncompr_size and !io.eof?
-					#p [rtf.length, uncompr_size]
 					# each flag byte flags 8 literals/references, 1 per bit
 					flags = ((flag_count += 1) % 8 == 0) ? io.getc : flags >> 1
 					if 1 == (flags & 1) # each flag bit is 1 for reference, 0 for literal
@@ -55,18 +54,24 @@ class Msg
 						rp = (rp << 4) | (l >> 4) # the offset relative to block start
 						l = (l & 0xf) + 2 # the number of bytes to copy
 						l.times do
-							rtf << (buf[wp] = buf[rp])
+							rtf << buf[wp] = buf[rp]
 							wp = (wp + 1) % 4096
 							rp = (rp + 1) % 4096
 						end
 					else
-						rtf << (buf[wp] = io.getc)
+						rtf << buf[wp] = io.getc
 						wp = (wp + 1) % 4096
 					end
 				end
 			else # unknown magic number
 				raise "Unknown compression type (magic number 0x%08x)" % magic
 			end
+			
+			# not sure if its due to a bug in the above code. doesn't seem to be
+			# in my tests, but sometimes there's a trailing null. we chomp it here,
+			# which actually makes the resultant rtf smaller than its advertised
+			# size (+uncompr_size+).
+			rtf.chomp! 0.chr
 			rtf
 		end
 
