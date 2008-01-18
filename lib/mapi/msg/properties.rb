@@ -1,5 +1,6 @@
 
-class Msg
+module Mapi
+class Msg < Message
 	#
 	# = Introduction
 	#
@@ -90,13 +91,14 @@ class Msg
 	#   have it be load based? you request subject, that translates into, please load the right
 	#   substg, et voila. maybe redo @raw as a lazy loading hash for substg objects, but do the
 	#   others straight away. maybe just parse keys so i know what i've got??
-	class Properties
-		# duplicated here for now
-		SUPPORT_DIR = File.dirname(__FILE__) + '/../..'
+	class PropertyStore
+		include PropertySet::Constants
+		Key = PropertySet::Key
 
 		# note that binary and default both use obj.open. not the block form. this means we should
 		# #close it later, which we don't. as we're only reading though, it shouldn't matter right?
 		# not really good though FIXME
+		# change these to use mapi symbolic const names
 		ENCODINGS = {
 			0x000d =>   proc { |obj| obj }, # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually. in which case we shouldn't get here right?
 			0x001f =>   proc { |obj| Ole::Types::FROM_UTF16.iconv obj.read }, # unicode
@@ -107,55 +109,15 @@ class Msg
 			:default => proc { |obj| obj.open }
 		}
 
-		SUBSTG_RX = /__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?/
-
-		# the property set guid constants
-		# these guids are all defined with the macro DEFINE_OLEGUID in mapiguid.h.
-		# see http://doc.ddart.net/msdn/header/include/mapiguid.h.html
-		oleguid = proc do |prefix|
-			Ole::Types::Clsid.parse "{#{prefix}-0000-0000-c000-000000000046}"
-		end
-
-		NAMES = {
-			oleguid['00020328'] => 'PS_MAPI',
-			oleguid['00020329'] => 'PS_PUBLIC_STRINGS',
-			oleguid['00020380'] => 'PS_ROUTING_EMAIL_ADDRESSES',
-			oleguid['00020381'] => 'PS_ROUTING_ADDRTYPE',
-			oleguid['00020382'] => 'PS_ROUTING_DISPLAY_NAME',
-			oleguid['00020383'] => 'PS_ROUTING_ENTRYID',
-			oleguid['00020384'] => 'PS_ROUTING_SEARCH_KEY',
-			# string properties in this namespace automatically get added to the internet headers
-			oleguid['00020386'] => 'PS_INTERNET_HEADERS',
-			# theres are bunch of outlook ones i think
-			# http://blogs.msdn.com/stephen_griffin/archive/2006/05/10/outlook-2007-beta-documentation-notification-based-indexing-support.aspx
-			# IPM.Appointment
-			oleguid['00062002'] => 'PSETID_Appointment',
-			# IPM.Task
-			oleguid['00062003'] => 'PSETID_Task',
-			# used for IPM.Contact
-			oleguid['00062004'] => 'PSETID_Address',
-			oleguid['00062008'] => 'PSETID_Common',
-			# didn't find a source for this name. it is for IPM.StickyNote
-			oleguid['0006200e'] => 'PSETID_Note',
-			# for IPM.Activity. also called the journal?
-			oleguid['0006200a'] => 'PSETID_Log',
-		}
-
-		module Constants
-			NAMES.each { |guid, name| const_set name, guid }
-		end
-
-		include Constants
+		SUBSTG_RX = /^__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?$/
+		PROPERTIES_RX = /^__properties_version1\.0$/
+		NAMEID_RX = /^__nameid_version1\.0$/
+		VALID_RX = /#{SUBSTG_RX}|#{PROPERTIES_RX}|#{NAMEID_RX}/
 
 		# access the underlying raw property hash
 		attr_reader :raw
-		# unused (non-property) objects after parsing an +Dirent+.
-		attr_reader :unused
 		attr_reader :nameid
 
-		# +nameid+ is to provide a way to inherit from parent (needed for property sets for
-		# attachments and recipients, which inherit from the msg itself. what about nested
-		# msg??)
 		def initialize
 			@raw = {}
 			@unused = []
@@ -169,7 +131,7 @@ class Msg
 		#++
 
 		def self.load obj, ignore=nil
-			prop = Properties.new
+			prop = new
 			prop.load obj
 			prop
 		end
@@ -177,11 +139,10 @@ class Msg
 		# Parse properties from the +Dirent+ obj
 		def load obj
 			# we need to do the nameid first, as it provides the map for later user defined properties
-			children = obj.children.dup
-			if nameid_obj = children.find { |child| child.name == '__nameid_version1.0' }
-				children.delete nameid_obj
-				@nameid = Properties.parse_nameid nameid_obj
+			if nameid_obj = obj.children.find { |child| child.name =~ NAMEID_RX }
+				@nameid = PropertyStore.parse_nameid nameid_obj
 				# hack to make it available to all msg files from the same ole storage object
+				# FIXME - come up with a neater way
 				class << obj.ole
 					attr_accessor :msg_nameid
 				end
@@ -192,21 +153,13 @@ class Msg
 			# now parse the actual properties. i think dirs that match the substg should be decoded
 			# as properties to. 0x000d is just another encoding, the dir encoding. it should match
 			# whether the object is file / dir. currently only example is embedded msgs anyway
-			children.each do |child|
-				if child.file?
-					begin
-						case child.name
-						when /__properties_version1\.0/
-							parse_properties child
-						when SUBSTG_RX
-							parse_substg *($~[1..-1].map { |num| num.hex rescue nil } + [child])
-						else raise "bad name for mapi property #{child.name.inspect}"
-						end
-					#rescue
-					#	Log.warn $!
-					#	@unused << child
-					end
-				else @unused << child
+			obj.children.each do |child|
+				next unless child.file?
+				case child.name
+				when PROPERTIES_RX
+					parse_properties child
+				when SUBSTG_RX
+					parse_substg(*($~[1..-1].map { |num| num.hex rescue nil } + [child]))
 				end
 			end
 		end
@@ -362,196 +315,13 @@ class Msg
 			end
 		end
 
-		# resolve an arg (could be key, code, string, or symbol), and possible guid to a key
-		def resolve arg, guid=nil
-			if guid;        Key.new arg, guid
-			else
-				case arg
-				when Key;     arg
-				when Integer; Key.new arg
-				else          sym_to_key[arg.to_sym]
-				end
-			end or raise "unable to resolve key from #{[arg, guid].inspect}"
-		end
-
-		# just so i can get an easy unique list of missing ones
-		@@quiet_property = {}
-
-		def sym_to_key
-			# create a map for converting symbols to keys. cache it
-			unless @sym_to_key
-				@sym_to_key = {}
-				@raw.each do |key, value|
-					sym = key.to_sym
-					# used to use @@quiet_property to only ignore once
-					Log.info "couldn't find symbolic name for key #{key.inspect}" unless Symbol === sym
-					if @sym_to_key[sym]
-						Log.warn "duplicate key #{key.inspect}"
-						# we give preference to PS_MAPI keys
-						@sym_to_key[sym] = key if key.guid == PS_MAPI
-					else
-						# just assign
-						@sym_to_key[sym] = key
-					end
-				end
-			end
-			@sym_to_key
-		end
-
-		# accessors
-
-		def [] arg, guid=nil
-			@raw[resolve(arg, guid)] rescue nil
-		end
-
-		#--
-		# for completeness, but its a mute point until i can write to the ole
-		# objects.
-		#def []= arg, guid=nil, value
-		#	@raw[resolve(arg, guid)] = value
-		#end
-		#++
-
-		def method_missing name, *args
-			if name.to_s !~ /\=$/ and args.empty?
-				self[name]
-			elsif name.to_s =~ /(.*)\=$/ and args.length == 1
-				self[$1] = args[0]
-			else
-				super
-			end
-		end
-
-		def to_h
-			hash = {}
-			sym_to_key.each { |sym, key| hash[sym] = self[key] if Symbol === sym }
-			hash
-		end
-
 		def inspect
 			'#<Properties ' + to_h.map do |k, v|
 				v = v.inspect
 				"#{k}=#{v.length > 32 ? v[0..29] + '..."' : v}"
 			end.join(' ') + '>'
 		end
-
-		# -----
-		
-		# temporary pseudo tags
-		
-		# for providing rtf to plain text conversion. later, html to text too.
-		def body
-			return @body if @body != false
-			@body = (self[:body] rescue nil)
-			@body = (::RTF::Converter.rtf2text body_rtf rescue nil) if !@body or @body.strip.empty?
-			@body
-		end
-
-		# for providing rtf decompression
-		def body_rtf
-			return @body_rtf if @body_rtf != false
-			@body_rtf = (RTF.rtfdecompr rtf_compressed.read rescue nil)
-		end
-
-		# for providing rtf to html conversion
-		def body_html
-			return @body_html if @body_html != false
-			@body_html = (self[:body_html].read rescue nil)
-			@body_html = (Msg::RTF.rtf2html body_rtf rescue nil) if !@body_html or @body_html.strip.empty?
-			# last resort
-			if !@body_html or @body_html.strip.empty?
-				Log.warn 'creating html body from rtf'
-				@body_html = (::RTF::Converter.rtf2text body_rtf, :html rescue nil)
-			end
-			@body_html
-		end
-
-		# +Properties+ are accessed by <tt>Key</tt>s, which are coerced to this class.
-		# Includes a bunch of methods (hash, ==, eql?) to allow it to work as a key in
-		# a +Hash+.
-		#
-		# Also contains the code that maps keys to symbolic names.
-		class Key
-			include Constants
-
-			attr_reader :code, :guid
-			def initialize code, guid=PS_MAPI
-				@code, @guid = code, guid
-			end
-
-			def to_sym
-				# hmmm, for some stuff, like, eg, the message class specific range, sym-ification
-				# of the key depends on knowing our message class. i don't want to store anything else
-				# here though, so if that kind of thing is needed, it can be passed to this function.
-				# worry about that when some examples arise.
-				case code
-				when Integer
-					if guid == PS_MAPI # and < 0x8000 ?
-						# the hash should be updated now that i've changed the process
-						MAPITAGS['%04x' % code].first[/_(.*)/, 1].downcase.to_sym rescue code
-					else
-						# handle other guids here, like mapping names to outlook properties, based on the
-						# outlook object model.
-						NAMED_MAP[self].to_sym rescue code
-					end
-				when String
-					# return something like
-					# note that named properties don't go through the map at the moment. so #categories
-					# doesn't work yet
-					code.downcase.to_sym
-				end
-			end
-			
-			def to_s
-				to_sym.to_s
-			end
-
-			# FIXME implement these
-			def transmittable?
-				# etc, can go here too
-			end
-
-			# this stuff is to allow it to be a useful key
-			def hash
-				[code, guid].hash
-			end
-
-			def == other
-				hash == other.hash
-			end
-
-			alias eql? :==
-
-			def inspect
-				# maybe the way to do this, would be to be able to register guids
-				# in a global lookup, which are used by Clsid#inspect itself, to
-				# provide symbolic names...
-				guid_str = NAMES[guid] || "{#{guid.format}}"
-				if Integer === code
-					hex = '0x%04x' % code
-					if guid == PS_MAPI
-						# just display as plain hex number
-						hex
-					else
-						"#<Key #{guid_str}/#{hex}>"
-					end
-				else
-					# display full guid and code
-					"#<Key #{guid_str}/#{code.inspect}>"
-				end
-			end
-		end
-
-		#--
-		# YUCK moved here because we need Key
-		#++
-
-		# data files that provide for the code to symbolic name mapping
-		# guids in named_map are really constant references to the above
-		MAPITAGS = open("#{SUPPORT_DIR}/data/mapitags.yaml") { |file| YAML.load file }
-		NAMED_MAP = Hash[*open("#{SUPPORT_DIR}/data/named_map.yaml") { |file| YAML.load file }.map do |key, value|
-			[Key.new(key[0], const_get(key[1])), value]
-		end.flatten]
 	end
+end
 end
 
