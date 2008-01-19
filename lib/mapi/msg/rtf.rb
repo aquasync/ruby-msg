@@ -3,7 +3,7 @@ require 'strscan'
 
 require 'rtf'
 
-class Msg
+module Mapi
 	#
 	# = Introduction
 	#
@@ -120,13 +120,13 @@ class Msg
 # [return-value] true or false, for whether it really does encode some html
 bool isrtfhtml(const char *buf,unsigned int len)
 { // We look for the words "\fromhtml" somewhere in the file.
-  // If the rtf encodes text rather than html, then instead
-  // it will only find "\fromtext".
-  const char *c;
-  for (c=buf; c<buf+len; c++)
-  { if (strncmp(c,"\\from",5)==0) return strncmp(c,"\\fromhtml",9)==0;
-  }
-  return false;
+	// If the rtf encodes text rather than html, then instead
+	// it will only find "\fromtext".
+	const char *c;
+	for (c=buf; c<buf+len; c++)
+	{ if (strncmp(c,"\\from",5)==0) return strncmp(c,"\\fromhtml",9)==0;
+	}
+	return false;
 }
 
 
@@ -150,26 +150,25 @@ bool isrtfhtml(const char *buf,unsigned int len)
 #
 void decodertfhtml(char *buf,unsigned int *len)
 { // c -- pointer to where we're reading from
-  // d -- pointer to where we're writing to. Invariant: d<c
-  // max -- how far we can read from (i.e. to the end of the original rtf)
-  // ignore_tag -- stores 'N': after \mhtmlN, we will ignore the subsequent \htmlN.
-  char *c=buf, *max=buf+*len, *d=buf; int ignore_tag=-1;
-  // First, we skip forwards to the first \htmltag.
-  while (c<max && strncmp(c,"{\\*\\htmltag",11)!=0) c++;
-  //
-  // Now work through the document. Our plan is as follows:
-  // * Ignore { and }. These are part of RTF markup.
-  // * Ignore \htmlrtf...\htmlrtf0. This is how RTF keeps its equivalent markup separate from the html.
-  // * Ignore \r and \n. The real carriage returns are stored in \par tags.
-  // * Ignore \pntext{..} and \liN and \fi-N. These are RTF junk.
-  // * Convert \par and \tab into \r\n and \t
-  // * Convert \'XX into the ascii character indicated by the hex number XX
-  // * Convert \{ and \} into { and }. This is how RTF escapes its curly braces.
-  // * When we get \*\mhtmltagN, keep the tag, but ignore the subsequent \*\htmltagN
-  // * When we get \*\htmltagN, keep the tag as long as it isn't subsequent to a \*\mhtmltagN
-  // * All other text should be kept as it is.
+	// d -- pointer to where we're writing to. Invariant: d<c
+	// max -- how far we can read from (i.e. to the end of the original rtf)
+	// ignore_tag -- stores 'N': after \mhtmlN, we will ignore the subsequent \htmlN.
+	char *c=buf, *max=buf+*len, *d=buf; int ignore_tag=-1;
+	// First, we skip forwards to the first \htmltag.
+	while (c<max && strncmp(c,"{\\*\\htmltag",11)!=0) c++;
+	//
+	// Now work through the document. Our plan is as follows:
+	// * Ignore { and }. These are part of RTF markup.
+	// * Ignore \htmlrtf...\htmlrtf0. This is how RTF keeps its equivalent markup separate from the html.
+	// * Ignore \r and \n. The real carriage returns are stored in \par tags.
+	// * Ignore \pntext{..} and \liN and \fi-N. These are RTF junk.
+	// * Convert \par and \tab into \r\n and \t
+	// * Convert \'XX into the ascii character indicated by the hex number XX
+	// * Convert \{ and \} into { and }. This is how RTF escapes its curly braces.
+	// * When we get \*\mhtmltagN, keep the tag, but ignore the subsequent \*\htmltagN
+	// * When we get \*\htmltagN, keep the tag as long as it isn't subsequent to a \*\mhtmltagN
+	// * All other text should be kept as it is.
 =end
-
 
 		# html encoded in rtf comments.
 		# {\*\htmltag84 &quot;}\htmlrtf "\htmlrtf0

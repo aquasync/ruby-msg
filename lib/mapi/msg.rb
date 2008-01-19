@@ -1,7 +1,8 @@
 require 'rubygems'
 require 'ole/storage'
-require 'msg/properties'
-require 'msg/rtf'
+require 'mapi'
+require 'mapi/msg/properties'
+require 'mapi/msg/rtf'
 require 'mime'
 
 module Mapi

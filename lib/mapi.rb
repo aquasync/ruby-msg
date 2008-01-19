@@ -281,14 +281,14 @@ module Mapi
 		# for providing rtf decompression
 		def body_rtf
 			return @body_rtf if defined?(@body_rtf)
-			@body_rtf = (::Msg::RTF.rtfdecompr rtf_compressed.read rescue nil)
+			@body_rtf = (RTF.rtfdecompr rtf_compressed.read rescue nil)
 		end
 
 		# for providing rtf to html conversion
 		def body_html
 			return @body_html if defined?(@body_html)
 			@body_html = (self[:body_html].read rescue nil)
-			@body_html = (::Msg::RTF.rtf2html body_rtf rescue nil) if !@body_html or @body_html.strip.empty?
+			@body_html = (RTF.rtf2html body_rtf rescue nil) if !@body_html or @body_html.strip.empty?
 			# last resort
 			if !@body_html or @body_html.strip.empty?
 				Log.warn 'creating html body from rtf'
@@ -414,9 +414,6 @@ module Mapi
 	# the pst parsing will go into mapi/pst.rb
 	# rtf related code will be in rtf.rb and mapi/rtf.rb
 end
-
-require 'msg'
-require 'mapi/convert'
 
 #message = Mapi::Msg.open 'test-swetlana_novikova.msg'
 #message = Mapi::Msg.open ARGV.first #'test-swetlana_novikova.msg'
