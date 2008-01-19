@@ -158,16 +158,14 @@ http://blogs.msdn.com/stephen_griffin/archive/2005/10/25/484656.aspx
   entryids are for the addressbook connection. EMS (exchange message something), AB
 	address book. MUIDEMSAB. makes sense.
 
----
+mapidefs.h:
 
-(mapidefs.h)
-174 /* Types of message receivers */
-175 #ifndef MAPI_ORIG
-176 #define MAPI_ORIG      0          /* The original author */
-177 #define MAPI_TO        1          /* The primary message receiver */
-178 #define MAPI_CC        2          /* A carbon copy receiver */
-179 #define MAPI_BCC       3          /* A blind carbon copy receiver */
-180 #define MAPI_P1        0x10000000 /* A message resend */
-181 #define MAPI_SUBMITTED 0x80000000 /* This message has already been sent */
-182 #endif
-
+  174 /* Types of message receivers */
+  175 #ifndef MAPI_ORIG
+  176 #define MAPI_ORIG      0          /* The original author */
+  177 #define MAPI_TO        1          /* The primary message receiver */
+  178 #define MAPI_CC        2          /* A carbon copy receiver */
+  179 #define MAPI_BCC       3          /* A blind carbon copy receiver */
+  180 #define MAPI_P1        0x10000000 /* A message resend */
+  181 #define MAPI_SUBMITTED 0x80000000 /* This message has already been sent */
+  182 #endif

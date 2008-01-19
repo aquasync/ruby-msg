@@ -4,11 +4,11 @@ TEST_DIR = File.dirname __FILE__
 $: << "#{TEST_DIR}/../lib"
 
 require 'test/unit'
-require 'msg'
+require 'mapi/msg'
 
 class TestMsg < Test::Unit::TestCase
 	def test_blammo
-		Msg.open "#{TEST_DIR}/test_Blammo.msg" do |msg|
+		Mapi::Msg.open "#{TEST_DIR}/test_Blammo.msg" do |msg|
 			assert_equal '"TripleNickel" <TripleNickel@mapi32.net>', msg.from
 			assert_equal 'BlammoBlammo', msg.subject
 			assert_equal 0, msg.recipients.length

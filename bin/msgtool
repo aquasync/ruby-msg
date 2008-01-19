@@ -2,7 +2,8 @@
 
 require 'optparse'
 require 'rubygems'
-require 'msg'
+require 'mapi/msg'
+require 'mapi/convert'
 require 'time'
 
 def munge_headers mime, opts
@@ -31,20 +32,20 @@ def msgtool
 		exit 1
 	end
 	# just shut up and convert a message to eml
-	Msg::Log.level = Ole::Log.level = opts[:verbose] ? Logger::WARN : Logger::FATAL
+	Mapi::Log.level = Ole::Log.level = opts[:verbose] ? Logger::WARN : Logger::FATAL
 	# for windows. see issue #2
 	STDOUT.binmode
 	case opts[:action]
 	when :convert
 		msgs.each do |filename|
-			msg = Msg.open filename
+			msg = Mapi::Msg.open filename
 			mime = msg.to_mime
 			munge_headers mime, opts
 			puts mime.to_s
 		end
 	when :convert_mbox
 		msgs.each do |filename|
-			msg = Msg.open filename
+			msg = Mapi::Msg.open filename
 			# could use something from the msg in our from line if we wanted
 			puts "From msgtool@ruby-msg #{Time.now.rfc2822}"
 			mime = msg.to_mime

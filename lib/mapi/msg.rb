@@ -1,8 +1,8 @@
 require 'rubygems'
 require 'ole/storage'
 require 'mapi'
+require 'mapi/rtf'
 require 'mapi/msg/properties'
-require 'mapi/msg/rtf'
 require 'mime'
 
 module Mapi
@@ -14,8 +14,7 @@ module Mapi
 	# The core of the work is done by the <tt>Msg::PropertyStore</tt> class.
 	#
 	class Msg < Message
-		VERSION = '1.3.2'
-		Log = Logger.new_with_callstack
+		VERSION = '1.4.0'
 
 		# these 2 will actually be of the form
 		# 1\.0_#([0-9A-Z]{8}), where $1 is the 0 based index number in hex

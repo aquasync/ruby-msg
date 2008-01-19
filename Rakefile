@@ -8,23 +8,25 @@ require 'fileutils'
 
 $:.unshift 'lib'
 
-require 'msg'
+require 'mapi/msg'
 
 PKG_NAME = 'ruby-msg'
-PKG_VERSION = Msg::VERSION
+PKG_VERSION = Mapi::Msg::VERSION
 
 task :default => [:test]
 
 Rake::TestTask.new(:test) do |t|
-	t.test_files = FileList["test/test_*.rb"]
+	t.test_files = FileList["test/test_*.rb"] - ['test/test_pst.rb']
 	t.warning = false
 	t.verbose = true
 end
 
-# RDocTask wasn't working for me
-desc 'Build the rdoc HTML Files'
-task :rdoc do
-	system "rdoc -S -N --main Msg --tab-width 2 --title '#{PKG_NAME} documentation' lib"
+Rake::RDocTask.new do |t|
+	t.rdoc_dir = 'doc'
+	t.title    = "#{PKG_NAME} documentation"
+	t.options += %w[--main README --line-numbers --inline-source --tab-width 2]
+	t.rdoc_files.include 'lib/**/*.rb'
+	t.rdoc_files.include 'README'
 end
 
 spec = Gem::Specification.new do |s|
@@ -44,7 +46,7 @@ spec = Gem::Specification.new do |s|
 	s.files += Dir.glob("bin/*")
 	
 	s.has_rdoc = true
-	s.rdoc_options += ['--main', 'Msg',
+	s.rdoc_options += ['--main', 'README',
 					   '--title', "#{PKG_NAME} documentation",
 					   '--tab-width', '2']
 
@@ -56,7 +58,7 @@ end
 
 Rake::GemPackageTask.new(spec) do |p|
 	p.gem_spec = spec
-	p.need_tar = true
+	p.need_tar = false #true
 	p.need_zip = false
 	p.package_dir = 'build'
 end

@@ -3,14 +3,19 @@
 - Initial simple msg test case.
 - Update TODO, stripping out all the redundant ole stuff.
 - Fix property set guids to use the new Ole::Types::Clsid type.
-- Add block form Msg.open
+- Add block form of Msg.open
 - Fix file requires for running tests individually.
-- Update RangesIO subclasses for changes in ruby-ole.
-- Start to flesh out move to mapi to clean up the way pst hijacks the msg
-  classes currently.
-- Pretty big refactoring, adding initial outlook 2003 pst support.
+- Update pst RangesIO subclasses for changes in ruby-ole.
 - Merge initial pst reading code (converted from libpst).
+- Pretty big pst refactoring, adding initial outlook 2003 pst support.
+- Flesh out move to mapi to clean up the way pst hijacks the msg
+  classes currently.
 - Add a ChangeLog :).
+- Update README, by converting Home.wiki with wiki2rdoc converter.
+- Separate out generic mapi object code from msg code, and separate out
+  conversion code.
+- Add decent set of Mapi and Msg unit tests, approaching ~55% code coverage,
+  not including pst.
 
 == 1.3.1 / 2007-08-21
 
