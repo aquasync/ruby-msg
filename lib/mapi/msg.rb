@@ -2,7 +2,6 @@ require 'rubygems'
 require 'ole/storage'
 require 'mapi'
 require 'mapi/rtf'
-require 'mime'
 
 module Mapi
 	#
@@ -217,7 +216,7 @@ module Mapi
 					[pseudo_prop, Key.new(prop, guid)]
 				end
 
-				Log.warn "* ignoring #{remaining.length} objects in nameid" unless remaining.empty?
+				#Log.warn "* ignoring #{remaining.length} objects in nameid" unless remaining.empty?
 				# this leaves a bunch of other unknown chunks of data with completely unknown meaning.
 				# pp [:unknown, child.name, child.data.unpack('H*')[0].scan(/.{16}/m)]
 				Hash[*props.flatten]
@@ -283,8 +282,8 @@ module Mapi
 						# seems to work:
 						add_property key, Ole::Types.load_time(data[8..-1])
 					else
-						Log.warn "ignoring data in __properties section, encoding: #{encoding}"
-						Log << data.unpack('H*').inspect + "\n"
+						#Log.warn "ignoring data in __properties section, encoding: #{encoding}"
+						#Log << data.unpack('H*').inspect + "\n"
 					end
 				end
 			end

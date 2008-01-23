@@ -40,9 +40,9 @@ module Mapi
 
 			# process the data
 			case magic
-			when 0x414c454d # magic number that identifies the stream as a uncompressed stream
+			when 0x414c454d # "MELA" magic number that identifies the stream as a uncompressed stream
 				rtf = io.read uncompr_size
-			when 0x75465a4c # magic number that identifies the stream as a compressed stream
+			when 0x75465a4c # "LZFu" magic number that identifies the stream as a compressed stream
 				flag_count = -1
 				flags = nil
 				while rtf.length < uncompr_size and !io.eof?

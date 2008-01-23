@@ -59,7 +59,9 @@ need to think about the role of the mapi code, and Pst::Item etc, but that layer
 require 'mapi'
 require 'enumerator'
 require 'ostruct'
+require 'ole/ranges_io'
 
+module Mapi
 class Pst
 	VERSION = '0.6.0'
 
@@ -942,8 +944,8 @@ class Pst
 			# type 3 is removed. an artifact of not handling the indirect blocks properly in libpst.
 		}
 
-		PR_SUBJECT = Msg::Properties::MAPITAGS.find { |num, (name, type)| name == 'PR_SUBJECT' }.first.hex
-		PR_BODY_HTML = Msg::Properties::MAPITAGS.find { |num, (name, type)| name == 'PR_BODY_HTML' }.first.hex
+		PR_SUBJECT = PropertySet::TAGS.find { |num, (name, type)| name == 'PR_SUBJECT' }.first.hex
+		PR_BODY_HTML = PropertySet::TAGS.find { |num, (name, type)| name == 'PR_BODY_HTML' }.first.hex
 
 		# this stuff could maybe be moved to Ole::Types? or leverage it somehow?
 		# whether or not a type is immeidate is more a property of the pst encoding though i expect.
@@ -1489,29 +1491,28 @@ only remaining issue is test4 recipients of 200044. strange.
 	# ----------------------------------------------------------------------------
 	#
 
-	class Item < Mapi::Item
-		class PropertyStore < Mapi::PropertyStore
-			def add_property key, type, value
-				super key, value if key < 0x8000
-			end
+	def self.make_property_set property_list
+		hash = property_list.inject({}) do |hash, (key, type, value)|
+			hash.update PropertySet::Key.new(key) => value
 		end
+		PropertySet.new hash
+	end
 
-		class Attachment < Mapi::Item::Attachment
-			def initialize list
-				@properties = PropertyStore.new
-				list.each { |a, b, c| @properties.add_property a, b, c }
+	class Attachment < Mapi::Attachment
+		def initialize list
+			super Pst.make_property_set(list)
 
-				@embedded_msg = props.attach_data if Item === props.attach_data
-			end
+			@embedded_msg = props.attach_data if Item === props.attach_data
 		end
+	end
 
-		class Recipient < Mapi::Item::Recipient
-			def initialize list
-				@properties = PropertyStore.new
-				list.each { |a, b, c| @properties.add_property a, b, c }
-			end
+	class Recipient < Mapi::Recipient
+		def initialize list
+			super Pst.make_property_set(list)
 		end
+	end
 
+	class Item < Mapi::Message
 		class EntryID < Struct.new(:u1, :entry_id, :id)
 			UNPACK_STR = 'VA16V'
 
@@ -1523,12 +1524,11 @@ only remaining issue is test4 recipients of 200044. strange.
 
 		include RecursivelyEnumerable
 
-		attr_reader :properties
 		attr_accessor :type, :parent
+
 		def initialize desc, list, type=nil
 			@desc = desc
-			@properties = PropertyStore.new
-			list.each { |a, b, c| @properties.add_property a, b, c }
+			super Pst.make_property_set(list)
 
 			# this is kind of weird, but the ids of the special folders are stored in a hash
 			# when the root item is loaded
@@ -1556,11 +1556,7 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 			end
 
 			@type = type
-
-			super props
 		end
-
-		alias props :properties
 
 		def each_child
 			id = ipm_subtree_entryid
@@ -1821,5 +1817,5 @@ which confirms my belief that the block size for idx and desc is more likely 512
 		end
 	end
 end
-
+end
 

@@ -1,5 +1,7 @@
 require 'yaml'
 require 'mapi/types'
+require 'mapi/rtf'
+require 'rtf'
 
 module Mapi
 	#
@@ -231,7 +233,11 @@ module Mapi
 		def body
 			return @body if defined?(@body)
 			@body = (self[:body] rescue nil)
-			@body = (::RTF::Converter.rtf2text body_rtf rescue nil) if !@body or @body.strip.empty?
+			# last resort
+			if !@body or @body.strip.empty?
+				Log.warn 'creating text body from rtf'
+				@body = (::RTF::Converter.rtf2text body_rtf rescue nil)
+			end
 			@body
 		end
 

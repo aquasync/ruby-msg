@@ -67,7 +67,48 @@ class TestMapiPropertySet < Test::Unit::TestCase
 	# other things we could test - write support. duplicate keys
 
 	def test_pseudo_properties
-		# writeme
+		# load some compressed rtf data
+		data = File.read File.dirname(__FILE__) + '/test_rtf.data'
+		props = PropertySet.new PropertySet::Key.new(0x1009) => StringIO.new(data)
+		# all these get generated from the rtf. still need tests for the way the priorities work
+		# here, and also the html embedded in rtf stuff....
+		assert_equal((<<-'end').chomp.gsub(/\n/, "\n\r"), props.body_rtf)
+{\rtf1\ansi\ansicpg1252\fromtext \deff0{\fonttbl
+{\f0\fswiss Arial;}
+{\f1\fmodern Courier New;}
+{\f2\fnil\fcharset2 Symbol;}
+{\f3\fmodern\fcharset0 Courier New;}}
+{\colortbl\red0\green0\blue0;\red0\green0\blue255;}
+\uc1\pard\plain\deftab360 \f0\fs20 \par
+I will be out of the office starting  15.02.2007 and will not return until\par
+27.02.2007.\par
+\par
+I will respond to your message when I return. For urgent enquiries please\par
+contact Motherine Jacson.\par
+\par
+}
+		end
+		assert_equal <<-'end', props.body_html
+<html>
+<body>
+<br>I will be out of the office starting  15.02.2007 and will not return until
+<br>27.02.2007.
+<br>
+<br>I will respond to your message when I return. For urgent enquiries please
+<br>contact Motherine Jacson.
+<br>
+<br></body>
+</html>
+		end
+		assert_equal <<-'end', props.body
+
+I will be out of the office starting  15.02.2007 and will not return until
+27.02.2007.
+
+I will respond to your message when I return. For urgent enquiries please
+contact Motherine Jacson.
+
+		end
 	end
 end
 

@@ -21,6 +21,21 @@ Rake::TestTask.new(:test) do |t|
 	t.verbose = true
 end
 
+begin
+	require 'rcov/rcovtask'
+	# NOTE: this will not do anything until you add some tests
+	desc "Create a cross-referenced code coverage report"
+	Rcov::RcovTask.new do |t|
+		t.test_files = FileList['test/test*.rb']
+		t.ruby_opts << "-Ilib" # in order to use this rcov
+		t.rcov_opts << "--xrefs"  # comment to disable cross-references
+		t.rcov_opts << "--exclude /usr/local/lib/site_ruby"
+		t.verbose = true
+	end
+rescue LoadError
+	# Rcov not available
+end
+
 Rake::RDocTask.new do |t|
 	t.rdoc_dir = 'doc'
 	t.title    = "#{PKG_NAME} documentation"
@@ -37,7 +52,7 @@ spec = Gem::Specification.new do |s|
 	s.authors = ["Charles Lowe"]
 	s.email = %q{aquasync@gmail.com}
 	s.homepage = %q{http://code.google.com/p/ruby-msg}
-	#s.rubyforge_project = %q{ruby-msg}
+	s.rubyforge_project = %q{ruby-msg}
 
 	s.executables = ['msgtool']
 	s.files  = Dir.glob('data/*.yaml') + ['Rakefile', 'README', 'FIXES']
@@ -50,10 +65,8 @@ spec = Gem::Specification.new do |s|
 					   '--title', "#{PKG_NAME} documentation",
 					   '--tab-width', '2']
 
-
-	s.autorequire = 'msg'
-
-	s.add_dependency 'ruby-ole', '>=1.2.3'
+	s.add_dependency 'ruby-ole', '>=1.2.4'
+	s.add_dependency 'vpim', '>=0.360'
 end
 
 Rake::GemPackageTask.new(spec) do |p|
