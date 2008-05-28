@@ -45,22 +45,21 @@ Rake::RDocTask.new do |t|
 end
 
 spec = Gem::Specification.new do |s|
-	s.name = PKG_NAME
-	s.version = PKG_VERSION
-	s.summary = %q{Ruby Msg library.}
+	s.name        = PKG_NAME
+	s.version     = PKG_VERSION
+	s.summary     = %q{Ruby Msg library.}
 	s.description = %q{A library for reading Outlook msg files, and for converting them to RFC2822 emails.}
-	s.authors = ["Charles Lowe"]
-	s.email = %q{aquasync@gmail.com}
-	s.homepage = %q{http://code.google.com/p/ruby-msg}
+	s.authors     = ["Charles Lowe"]
+	s.email       = %q{aquasync@gmail.com}
+	s.homepage    = %q{http://code.google.com/p/ruby-msg}
 	s.rubyforge_project = %q{ruby-msg}
 
 	s.executables = ['msgtool']
-	s.files  = Dir.glob('data/*.yaml') + ['Rakefile', 'README', 'FIXES']
-	s.files += Dir.glob("lib/**/*.rb")
-	s.files += Dir.glob("test/test_*.rb")
-	s.files += Dir.glob("bin/*")
+	s.files       = FileList['data/*.yaml', 'Rakefile', 'README', 'FIXES']
+	s.files      += FileList['lib/**/*.rb', 'test/test_*.rb', 'bin/*']
 	
-	s.has_rdoc = true
+	s.has_rdoc    = true
+	s.extra_rdoc_files = ['README']
 	s.rdoc_options += ['--main', 'README',
 					   '--title', "#{PKG_NAME} documentation",
 					   '--tab-width', '2']

@@ -1,5 +1,14 @@
 = Newer Msg
 
+* extend msgtool with support for the other kinds of msg files. things like, 
+  - dump properties to yaml / xml (with option on how the keys should be dumped).
+    should be fairly easy to implement. hash, with array of attach & recips.
+  - just write out the mime type
+  - convert to a certain output type, maybe supporting an override of some
+    sort.
+  - options regarding preferring rtf / html / txt output for things. like, eg
+    the output for note conversion, will be one of them i guess.
+
 * fix nameid handling for sub Properties objects. needs to inherit top-level @nameid.
 
 * better handling for "Untitled Attachments", or attachments with no filename at all.

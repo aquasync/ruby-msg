@@ -222,8 +222,13 @@ module Mapi
 		def to_h
 			sym_to_key.inject({}) { |hash, (sym, key)| hash.update sym => raw[key] }
 		end
-		
-		# the other pseudo properties like body_html, body_rtf etc that are inferred will exist here.
+
+		def inspect
+			"#<#{self.class} " + to_h.sort_by { |k, v| k.to_s }.map do |k, v|
+				v = v.inspect
+				"#{k}=#{v.length > 32 ? v[0..29] + '..."' : v}"
+			end.join(' ') + '>'
+		end
 
 		# -----
 		

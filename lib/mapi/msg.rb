@@ -87,12 +87,11 @@ module Mapi
 		#
 		# = TODO
 		#
-		# * Test cases.
 		# * While the key objects are sufficient, the value objects are just plain
 		#   ruby types. It currently isn't possible to write to the values, or to know
 		#   which encoding the value had.
-		# * Consider other MAPI property stores, such as tnef/pst. Similar model?
-		#   Generalise this one?
+		# * Update this doc.
+		# * Perhaps change from eager loading, to be load-on-demand.
 		#
 		class PropertyStore
 			include PropertySet::Constants
@@ -117,23 +116,19 @@ module Mapi
 			NAMEID_RX = /^__nameid_version1\.0$/
 			VALID_RX = /#{SUBSTG_RX}|#{PROPERTIES_RX}|#{NAMEID_RX}/
 
-			# access the underlying raw property hash
-			attr_reader :raw
 			attr_reader :nameid
 
 			def initialize
-				@raw = {}
-				@unused = []
 				@nameid = nil
-				# FIXME
-				@body_rtf = @body_html = @body = false
+				# not exactly a cache currently
+				@cache = {}
 			end
 
 			#--
 			# The parsing methods
 			#++
 
-			def self.load obj, ignore=nil
+			def self.load obj
 				prop = new
 				prop.load obj
 				prop
@@ -306,23 +301,21 @@ module Mapi
 					key = Key.new key
 				end
 				if pos
-					@raw[key] ||= []
-					Log.warn "duplicate property" unless Array === @raw[key]
+					@cache[key] ||= []
+					Log.warn "duplicate property" unless Array === @cache[key]
 					# ^ this is actually a trickier problem. the issue is more that they must all be of
 					# the same type.
-					@raw[key][pos] = value
+					@cache[key][pos] = value
 				else
 					# take the last.
-					Log.warn "duplicate property #{key.inspect}" if @raw[key]
-					@raw[key] = value
+					Log.warn "duplicate property #{key.inspect}" if @cache[key]
+					@cache[key] = value
 				end
 			end
 
-			def inspect
-				'#<Properties ' + to_h.map do |k, v|
-					v = v.inspect
-					"#{k}=#{v.length > 32 ? v[0..29] + '..."' : v}"
-				end.join(' ') + '>'
+			# delegate to cache
+			def method_missing name, *args, &block
+				@cache.send name, *args, &block
 			end
 		end
 
@@ -355,7 +348,7 @@ module Mapi
 		def initialize root
 			@root = root
 			@close_parent = false
-			super PropertySet.new(PropertyStore.load(@root).raw)
+			super PropertySet.new(PropertyStore.load(@root))
 			Msg.warn_unknown @root
 		end
 
@@ -396,11 +389,10 @@ module Mapi
 
 			def initialize obj
 				@obj = obj
-				@properties = Properties.load @obj
 				@embedded_ole = nil
 				@embedded_msg = nil
 
-				super PropertySet.new(PropertyStore.load(@obj).raw)
+				super PropertySet.new(PropertyStore.load(@obj))
 				Msg.warn_unknown @obj
 
 				@obj.children.each do |child|
@@ -448,7 +440,7 @@ module Mapi
 
 			def initialize obj
 				@obj = obj
-				super PropertySet.new(PropertyStore.load(@obj).raw)
+				super PropertySet.new(PropertyStore.load(@obj))
 				Msg.warn_unknown @obj
 			end
 		end
