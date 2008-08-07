@@ -4,8 +4,9 @@
   - dump properties to yaml / xml (with option on how the keys should be dumped).
     should be fairly easy to implement. hash, with array of attach & recips.
   - just write out the mime type
-  - convert to a certain output type, maybe supporting an override of some
-    sort.
+  - convert to the automatically guessed output type, also allowing an override
+    of some sort. have a batch mode that converts all arguments, using automatic
+    extensions, eg .vcf, .eml etc.
   - options regarding preferring rtf / html / txt output for things. like, eg
     the output for note conversion, will be one of them i guess.
 

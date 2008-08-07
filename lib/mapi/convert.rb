@@ -4,8 +4,8 @@ require 'mapi/convert/contact'
 module Mapi
 	class Message
 		CONVERSION_MAP = {
-			'text/x-vcard'   => :to_vcard,
-			'message/rfc822' => :to_mime
+			'text/x-vcard'   => [:to_vcard, 'vcf'],
+			'message/rfc822' => [:to_tmail, 'eml']
 			# ...
 		}
 
@@ -25,10 +25,10 @@ module Mapi
 
 		def convert
 			type = mime_type
-			unless name = CONVERSION_MAP[type]
-				raise 'unable to convert message with mime type - %p' % name
+			unless pair = CONVERSION_MAP[type]
+				raise 'unable to convert message with mime type - %p' % type
 			end
-			send name
+			send pair.first
 		end
 	end
 end

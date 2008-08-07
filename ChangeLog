@@ -16,6 +16,9 @@
   conversion code.
 - Add decent set of Mapi and Msg unit tests, approaching ~55% code coverage,
   not including pst.
+- Rip out custom Mime class and replace with TMail. Will want to wait until
+  new tmail release comes out with the TMail::Mail#to_tree addition, and
+  also fix gem install on windows, which seems broken at the moment.
 
 == 1.3.1 / 2007-08-21
 
@@ -24,7 +27,7 @@
 
 == 1.2.17 / 2007-05-13
 
-(this was last release before splitting out ruby-ole. subsequent bug fix
+(This was last release before splitting out ruby-ole. subsequent bug fix
 point releases 1-3 were made directly on the gem, not reflected in the
 repository, though the fixes were also forward-ported.)
 
@@ -59,7 +62,7 @@ repository, though the fixes were also forward-ported.)
 
 == <= 1.2.9 / 2007-01-11..2007-01-19
 
-(haven't bothered to note exact versions and dates - nothing here was released.
+(Haven't bothered to note exact versions and dates - nothing here was released.
 can look at history of lib/msg.rb to see exact VERSION at each commit.)
 
 - Merged most of the named property work.

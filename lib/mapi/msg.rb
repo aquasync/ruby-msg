@@ -271,7 +271,7 @@ module Mapi
 					when '000b' # boolean
 						# again, heaps more data than needed. and its not always 0 or 1.
 						# they are in fact quite big numbers. this is wrong.
-	#					p [property, data[4..-1].unpack('H*')[0]]
+# 					p [property, data[4..-1].unpack('H*')[0]]
 						add_property key, data[8, 4].unpack('V')[0] != 0
 					when '0040' # systime
 						# seems to work:
@@ -374,13 +374,6 @@ module Mapi
 			@recipients ||= @root.children.
 				select { |child| child.dir? and child.name =~ RECIP_RX }.
 				map { |child| Recipient.new child }
-		end
-
-		def inspect
-			#str = %w[from to cc bcc subject type].map do |key|
-			#	send(key) and "#{key}=#{send(key).inspect}"
-			#end.compact.join(' ')
-			"#<Msg ...>" ##{str}>"
 		end
 
 		class Attachment < Mapi::Attachment

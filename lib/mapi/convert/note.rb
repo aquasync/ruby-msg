@@ -1,8 +1,18 @@
-require 'base64'
-require 'mime'
+require 'rubygems'
+require 'tmail'
+
+# these will be removed later
 require 'time'
+require 'mime'
 
 # there is some Msg specific stuff in here.
+
+class TMail::Mail
+	def quoted_body= str
+		body_port.wopen { |f| f.write str }
+		str
+	end
+end
 
 module Mapi
 	class Message
@@ -143,7 +153,7 @@ module Mapi
 			define_method(key.downcase) { headers[key].join(' ') if headers.has_key?(key) }
 		end
 
-		def body_to_mime
+		def body_to_tmail
 			# to create the body
 			# should have some options about serializing rtf. and possibly options to check the rtf
 			# for rtf2html conversion, stripping those html tags or other similar stuff. maybe want to
@@ -151,35 +161,37 @@ module Mapi
 			# source for html and plaintext.
 			if props.body_rtf or props.body_html
 				# should plain come first?
-				mime = Mime.new "Content-Type: multipart/alternative\r\n\r\n"
+				part = TMail::Mail.new
 				# its actually possible for plain body to be empty, but the others not.
 				# if i can get an html version, then maybe a callout to lynx can be made...
-				mime.parts << Mime.new("Content-Type: text/plain\r\n\r\n" + props.body) if props.body
+				part.parts << TMail::Mail.parse("Content-Type: text/plain\r\n\r\n" + props.body) if props.body
 				# this may be automatically unwrapped from the rtf if the rtf includes the html
-				mime.parts << Mime.new("Content-Type: text/html\r\n\r\n"  + props.body_html) if props.body_html
+				part.parts << TMail::Mail.parse("Content-Type: text/html\r\n\r\n"  + props.body_html) if props.body_html
 				# temporarily disabled the rtf. its just showing up as an attachment anyway.
 				#mime.parts << Mime.new("Content-Type: text/rtf\r\n\r\n"   + props.body_rtf)  if props.body_rtf
 				# its thus currently possible to get no body at all if the only body is rtf. that is not
 				# really acceptable FIXME
-				mime
+				part['Content-Type'] = 'multipart/alternative'
+				part
 			else
 				# check no header case. content type? etc?. not sure if my Mime class will accept
 				Log.debug "taking that other path"
 				# body can be nil, hence the to_s
-				Mime.new "Content-Type: text/plain\r\n\r\n" + props.body.to_s
+				TMail::Mail.parse "Content-Type: text/plain\r\n\r\n" + props.body.to_s
 			end
 		end
 
-		def to_mime
+		def to_tmail
 			# intended to be used for IPM.note, which is the email type. can use it for others if desired,
 			# YMMV
 			Log.warn "to_mime used on a #{props.message_class}" unless props.message_class == 'IPM.Note'
 			# we always have a body
-			mime = body = body_to_mime
+			mail = body = body_to_tmail
 
 			# If we have attachments, we take the current mime root (body), and make it the first child
 			# of a new tree that will contain body and attachments.
 			unless attachments.empty?
+				raise NotImplementedError
 				mime = Mime.new "Content-Type: multipart/mixed\r\n\r\n"
 				mime.parts << body
 				# i don't know any better way to do this. need multipart/related for inline images
@@ -203,38 +215,39 @@ module Mapi
 			# if multipart, and is only there readonly. can do that, or do a reparse...
 			# The way i do this means that only the first preamble will say it, not preambles of nested
 			# multipart chunks.
-			mime.preamble.replace "This is a multi-part message in MIME format.\r\n" if mime.multipart?
+			mail.quoted_body = "This is a multi-part message in MIME format.\r\n" if mail.multipart?
 
 			# now that we have a root, we can mix in all our headers
 			headers.each do |key, vals|
 				# don't overwrite the content-type, encoding style stuff
-				next if mime.headers.has_key? key
+				next if mail[key]
 				# some new temporary hacks
 				next if key =~ /content-type/i and vals[0] =~ /base64/
-				next if mime.headers.keys.map(&:downcase).include? key.downcase
-				mime.headers[key] += vals
+				#next if mime.headers.keys.map(&:downcase).include? key.downcase
+				mail[key] = vals.first
 			end
 			# just a stupid hack to make the content-type header last, when using OrderedHash
-			mime.headers['Content-Type'] = mime.headers.delete 'Content-Type'
+			#mime.headers['Content-Type'] = mime.headers.delete 'Content-Type'
 
-			mime
+			mail
 		end
 	end
 
 	class Attachment
-		def to_mime
+		def to_tmail
 			# TODO: smarter mime typing.
 			mimetype = props.attach_mime_tag || 'application/octet-stream'
-			mime = Mime.new "Content-Type: #{mimetype}\r\n\r\n"
-			mime.headers['Content-Disposition'] = [%{attachment; filename="#{filename}"}]
-			mime.headers['Content-Transfer-Encoding'] = ['base64']
-			mime.headers['Content-Location'] = [props.attach_content_location] if props.attach_content_location
-			mime.headers['Content-ID'] = [props.attach_content_id] if props.attach_content_id
+			part = TMail::Mail.parse "Content-Type: #{mimetype}\r\n\r\n"
+			part['Content-Disposition'] = %{attachment; filename="#{filename}"}
+			part['Content-Transfer-Encoding'] = 'base64'
+			part['Content-Location'] = props.attach_content_location if props.attach_content_location
+			part['Content-ID'] = props.attach_content_id if props.attach_content_id
 			# data.to_s for now. data was nil for some reason.
 			# perhaps it was a data object not correctly handled?
 			# hmmm, have to use read here. that assumes that the data isa stream.
 			# but if the attachment data is a string, then it won't work. possible?
 			data_str = if @embedded_msg
+				raise NotImplementedError
 				mime.headers['Content-Type'] = 'message/rfc822'
 				# lets try making it not base64 for now
 				mime.headers.delete 'Content-Transfer-Encoding'
@@ -243,6 +256,7 @@ module Mapi
 				mime.headers['Content-Disposition'] = [%{attachment; filename="#{@embedded_msg.subject}"}]
 				@embedded_msg.to_mime.to_s
 			elsif @embedded_ole
+				raise NotImplementedError
 				# kind of hacky
 				io = StringIO.new
 				Ole::Storage.new io do |ole|
@@ -253,8 +267,8 @@ module Mapi
 			else
 				data.read.to_s
 			end
-			mime.body.replace @embedded_msg ? data_str : Base64.encode64(data_str).gsub(/\n/, "\r\n")
-			mime
+			part.body = @embedded_msg ? data_str : Base64.encode64(data_str).gsub(/\n/, "\r\n")
+			part
 		end
 	end
 

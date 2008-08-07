@@ -38,7 +38,7 @@ Broad features of the project:
 Features of the lower-level msg handling:
 
 * Supports both types of property storage (large ones in +substg+
-  files, and small ones in the +properties+ file.
+  files, and small ones in the +properties+ file).
 
 * Complete support for named properties in different GUID namespaces.
 

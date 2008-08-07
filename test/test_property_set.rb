@@ -47,7 +47,9 @@ class TestMapiPropertySet < Test::Unit::TestCase
 		props = PropertySet.new store
 		# can resolve subject
 		assert_equal PropertySet::Key.new(0x0037), props.resolve('subject')
-		# note that the way things are set up, you can't resolve body though
+		# note that the way things are set up, you can't resolve body though. ie, only
+		# existent (not all-known) properties resolve. maybe this should be changed. it'll
+		# need to be, for <tt>props.body=</tt> to work as it should.
 		assert_equal nil, props.resolve('body')
 		assert_equal 'the subject', props.subject
 		assert_equal ['some keywords'], props.keywords
@@ -64,7 +66,7 @@ class TestMapiPropertySet < Test::Unit::TestCase
 		assert_equal [['some keywords'], 'the subject'], props.values.sort_by(&:to_s)
 	end
 
-	# other things we could test - write support. duplicate keys
+	# other things we could test - write support. duplicate key handling
 
 	def test_pseudo_properties
 		# load some compressed rtf data

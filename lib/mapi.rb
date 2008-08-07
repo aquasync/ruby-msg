@@ -2,7 +2,11 @@ require 'mapi/types'
 require 'mapi/property_set'
 
 module Mapi
-	class ObjectWithProperties
+	#
+	# Mapi::Object is the base class used for all mapi objects, and is purely a
+	# property set container
+	#
+	class Object
 		attr_reader :properties
 		alias props properties
 
@@ -13,7 +17,7 @@ module Mapi
 	end
 
 	# a general attachment class. is subclassed by Msg and Pst attachment classes
-	class Attachment < ObjectWithProperties
+	class Attachment < Object
 		def filename
 			props.attach_long_filename || props.attach_filename
 		end
@@ -39,7 +43,7 @@ module Mapi
 		end
 	end
 	
-	class Recipient < ObjectWithProperties
+	class Recipient < Object
 		# some kind of best effort guess for converting to standard mime style format.
 		# there are some rules for encoding non 7bit stuff in mail headers. should obey
 		# that here, as these strings could be unicode
@@ -75,11 +79,12 @@ module Mapi
 	end
 
 	# i refer to it as a message (as does mapi), although perhaps Item is better, as its a more general
-	# concept than a message
+	# concept than a message, as used in Pst files. though maybe i'll switch to using
+	# Mapi::Object as the base class there.
 	#
 	# IMessage essentially, but there's also stuff like IMAPIFolder etc. so, for this to form
 	# basis for PST Item, it'd need to be more general.
-	class Message < ObjectWithProperties
+	class Message < Object
 		# these 2 collections should be provided by our subclasses
 		def attachments
 			raise NotImplementedError
@@ -87,6 +92,15 @@ module Mapi
 
 		def recipients
 			raise NotImplementedError
+		end
+		
+		def inspect
+			str = %w[message_class from to subject].map do |key|
+				" #{key}=#{props.send(key).inspect}"
+			end.compact.join
+			str << " recipients=#{recipients.inspect}"
+			str << " attachments=#{attachments.inspect}"
+			"#<#{self.class.to_s[/\w+$/]}#{str}>"
 		end
 	end
 end

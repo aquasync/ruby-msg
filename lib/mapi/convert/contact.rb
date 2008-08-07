@@ -109,7 +109,7 @@ module Mapi
 						m.send "#{key}=", value if value
 					end
 
-					# the restof the stuff is custom
+					# the rest of the stuff is custom
 
 					url = get_property(:webpage) || get_property(:business_home_page)
 					m.add_field field('URL', url) if url
@@ -126,7 +126,7 @@ module Mapi
 						m.add_field field('ORG', get_property(:company_name))
 					end
 
-	#imaddress
+					# TODO: imaddress
 				end
 			end
 		end

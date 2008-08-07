@@ -25,14 +25,14 @@ class TestMapiPropertySet < Test::Unit::TestCase
 			[]
 		end
 		# the ignoring of \r here should change. its actually not output consistently currently.
-		assert_equal((<<-end), msg.to_mime.to_s.gsub(/NextPart[_0-9a-z\.]+/, 'NextPart_XXX').delete("\r"))
+		assert_equal((<<-end), msg.to_tmail.to_s.gsub(/mimepart_[_0-9a-z\.]+/, 'mimepart_XXX').delete("\r"))
 From: sender@email.com
 Subject: Subject
-Content-Type: multipart/alternative; boundary="----_=_NextPart_XXX"
+Content-Type: multipart/alternative; boundary=mimepart_XXX
 
 This is a multi-part message in MIME format.
 
-------_=_NextPart_XXX
+--mimepart_XXX
 Content-Type: text/plain
 
 
@@ -43,8 +43,7 @@ I will respond to your message when I return. For urgent enquiries please
 contact Motherine Jacson.
 
 
-
-------_=_NextPart_XXX
+--mimepart_XXX
 Content-Type: text/html
 
 <html>
@@ -58,8 +57,7 @@ Content-Type: text/html
 <br></body>
 </html>
 
-
-------_=_NextPart_XXX--
+--mimepart_XXX--
 		end
 	end
 end
