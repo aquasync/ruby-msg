@@ -1,6 +1,5 @@
 require 'stringio'
 require 'strscan'
-
 require 'rtf'
 
 module Mapi
@@ -8,7 +7,7 @@ module Mapi
 	# = Introduction
 	#
 	# The +RTF+ module contains a few helper functions for dealing with rtf
-	# in msgs: +rtfdecompr+, and <tt>rtf2html</tt>.
+	# in mapi messages: +rtfdecompr+, and <tt>rtf2html</tt>.
 	#
 	# Both were ported from their original C versions for simplicity's sake.
 	#
@@ -22,7 +21,7 @@ module Mapi
 
 		# Decompresses compressed rtf +data+, as found in the mapi property
 		# +PR_RTF_COMPRESSED+. Code converted from my C version, which in turn
-		# was ported from Java source, in JTNEF I believe.
+		# I wrote from a Java source, in JTNEF I believe.
 		#
 		# C version was modified to use circular buffer for back references,
 		# instead of the optimization of the Java version to index directly into
@@ -75,122 +74,52 @@ module Mapi
 			rtf
 		end
 
-=begin
-# = RTF/HTML functions
-#
-# Sometimes in MAPI, the PR_BODY_HTML property contains the HTML of a message.
-# But more usually, the HTML is encoded inside the RTF body (which you get in the
-# PR_RTF_COMPRESSED property). These routines concern the decoding of the HTML
-# from this RTF body.
-#
-# An encoded htmlrtf file is a valid RTF document, but which contains additional
-# html markup information in its comments, and sometimes contains the equivalent
-# rtf markup outside the comments. Therefore, when it is displayed by a plain
-# simple RTF reader, the html comments are ignored and only the rtf markup has
-# effect. Typically, this rtf markup is not as rich as the html markup would have been.
-# But for an html-aware reader (such as the code below), we can ignore all the
-# rtf markup, and extract the html markup out of the comments, and get a valid
-# html document.
-#
-# There are actually two kinds of html markup in comments. Most of them are
-# prefixed by "\*\htmltagNNN", for some number NNN. But sometimes there's one
-# prefixed by "\*\mhtmltagNNN" followed by "\*\htmltagNNN". In this case,
-# the two are equivalent, but the m-tag is for a MIME Multipart/Mixed Message
-# and contains tags that refer to content-ids (e.g. img src="cid:072344a7")
-# while the normal tag just refers to a name (e.g. img src="fred.jpg")
-# The code below keeps the m-tag and discards the normal tag.
-# If there are any m-tags like this, then the message also contains an
-# attachment with a PR_CONTENT_ID property e.g. "072344a7". Actually,
-# sometimes the m-tag is e.g. img src="http://outlook/welcome.html" and the
-# attachment has a PR_CONTENT_LOCATION "http://outlook/welcome.html" instead
-# of a PR_CONTENT_ID.
-#
-# This code is experimental. It works on my own message archive, of about
-# a thousand html-encoded messages, received in Outlook97 and Outlook2000
-# and OutlookXP. But I can't guarantee that it will work on all rtf-encoded
-# messages. Indeed, it used to be the case that people would simply stick
-# {\fromhtml at the start of an html document, and } at the end, and send
-# this as RTF. If someone did this, then it will almost work in my function
-# but not quite. (Because I ignore \r and \n, and respect only \par. Thus,
-# any linefeeds in the erroneous encoded-html will be ignored.)
-
-# ISRTFHTML -- Given an uncompressed RTF body of the message, this
-# function tells you whether it encodes some html.
-# [in] (buf,*len) indicate the start and length of the uncompressed RTF body.
-# [return-value] true or false, for whether it really does encode some html
-bool isrtfhtml(const char *buf,unsigned int len)
-{ // We look for the words "\fromhtml" somewhere in the file.
-	// If the rtf encodes text rather than html, then instead
-	// it will only find "\fromtext".
-	const char *c;
-	for (c=buf; c<buf+len; c++)
-	{ if (strncmp(c,"\\from",5)==0) return strncmp(c,"\\fromhtml",9)==0;
-	}
-	return false;
-}
-
-
-# DECODERTFHTML -- Given an uncompressed RTF body of the message,
-# and assuming that it contains encoded-html, this function
-# turns it onto regular html.
-# [in] (buf,*len) indicate the start and length of the uncompressed RTF body.
-# [out] the buffer is overwritten with the HTML version, null-terminated,
-# and *len indicates the length of this HTML.
-#
-# Notes: (1) because of how the encoding works, the HTML version is necessarily
-# shorter than the encoded version. That's why it's safe for the function to
-# place the decoded html in the same buffer that formerly held the encoded stuff.
-# (2) Some messages include characters \'XX, where XX is a hexedecimal number.
-# This function simply converts this into ASCII. The conversion will only make
-# sense if the right code-page is being used. I don't know how rtf specifies which
-# code page it wants.
-# (3) By experiment, I discovered that \pntext{..} and \liN and \fi-N are RTF
-# markup that should be removed. There might be other RTF markup that should
-# also be removed. But I don't know what else.
-#
-void decodertfhtml(char *buf,unsigned int *len)
-{ // c -- pointer to where we're reading from
-	// d -- pointer to where we're writing to. Invariant: d<c
-	// max -- how far we can read from (i.e. to the end of the original rtf)
-	// ignore_tag -- stores 'N': after \mhtmlN, we will ignore the subsequent \htmlN.
-	char *c=buf, *max=buf+*len, *d=buf; int ignore_tag=-1;
-	// First, we skip forwards to the first \htmltag.
-	while (c<max && strncmp(c,"{\\*\\htmltag",11)!=0) c++;
-	//
-	// Now work through the document. Our plan is as follows:
-	// * Ignore { and }. These are part of RTF markup.
-	// * Ignore \htmlrtf...\htmlrtf0. This is how RTF keeps its equivalent markup separate from the html.
-	// * Ignore \r and \n. The real carriage returns are stored in \par tags.
-	// * Ignore \pntext{..} and \liN and \fi-N. These are RTF junk.
-	// * Convert \par and \tab into \r\n and \t
-	// * Convert \'XX into the ascii character indicated by the hex number XX
-	// * Convert \{ and \} into { and }. This is how RTF escapes its curly braces.
-	// * When we get \*\mhtmltagN, keep the tag, but ignore the subsequent \*\htmltagN
-	// * When we get \*\htmltagN, keep the tag as long as it isn't subsequent to a \*\mhtmltagN
-	// * All other text should be kept as it is.
-=end
-
-		# html encoded in rtf comments.
-		# {\*\htmltag84 &quot;}\htmlrtf "\htmlrtf0
-
-		# already generates better output that the c predecessor. eg from this chunk, where
-		# there are tags outside of the htmlrtf ignore block. 
-		# "{\\*\\htmltag116 <br />}\\htmlrtf \\line \\htmlrtf0 \\line {\\*\\htmltag84 <a href..."
-		# we take the approach of ignoring
-		# all rtf tags not explicitly handled. a proper parse tree would be nicer to work with.
-		# ruby rtf library?
-		# check http://homepage.ntlworld.com/peterhi/rtf_tools.html
-		# and
-		# http://rubyforge.org/projects/ruby-rtf/
-
-		# Substandard conversion of the original C code.
-		# Test and refactor, and try to correct some inaccuracies.
+		# Note, this is a conversion of the original C code. Not great - needs tests and
+		# some refactoring, and an attempt to correct some inaccuracies. Hacky but works.
+		#
 		# Returns +nil+ if it doesn't look like an rtf encapsulated rtf.
 		#
-		# Code is a hack, but it works.
+		# Some cases that the original didn't deal with have been patched up, eg from 
+		# this chunk, where there are tags outside of the htmlrtf ignore block.
+		#
+		# "{\\*\\htmltag116 <br />}\\htmlrtf \\line \\htmlrtf0 \\line {\\*\\htmltag84 <a href..."
+		#
+		# We take the approach of ignoring all rtf tags not explicitly handled. A proper
+		# parse tree would be nicer to work with. will need to look for ruby rtf library
+		#
+		# Some of the original comment to the c code is excerpted here:
+		#
+		# Sometimes in MAPI, the PR_BODY_HTML property contains the HTML of a message.
+		# But more usually, the HTML is encoded inside the RTF body (which you get in the
+		# PR_RTF_COMPRESSED property). These routines concern the decoding of the HTML
+		# from this RTF body.
+		#
+		# An encoded htmlrtf file is a valid RTF document, but which contains additional
+		# html markup information in its comments, and sometimes contains the equivalent
+		# rtf markup outside the comments. Therefore, when it is displayed by a plain
+		# simple RTF reader, the html comments are ignored and only the rtf markup has
+		# effect. Typically, this rtf markup is not as rich as the html markup would have been.
+		# But for an html-aware reader (such as the code below), we can ignore all the
+		# rtf markup, and extract the html markup out of the comments, and get a valid
+		# html document.
+		#
+		# There are actually two kinds of html markup in comments. Most of them are
+		# prefixed by "\*\htmltagNNN", for some number NNN. But sometimes there's one
+		# prefixed by "\*\mhtmltagNNN" followed by "\*\htmltagNNN". In this case,
+		# the two are equivalent, but the m-tag is for a MIME Multipart/Mixed Message
+		# and contains tags that refer to content-ids (e.g. img src="cid:072344a7")
+		# while the normal tag just refers to a name (e.g. img src="fred.jpg")
+		# The code below keeps the m-tag and discards the normal tag.
+		# If there are any m-tags like this, then the message also contains an
+		# attachment with a PR_CONTENT_ID property e.g. "072344a7". Actually,
+		# sometimes the m-tag is e.g. img src="http://outlook/welcome.html" and the
+		# attachment has a PR_CONTENT_LOCATION "http://outlook/welcome.html" instead
+		# of a PR_CONTENT_ID.
+		#
 		def rtf2html rtf
 			scan = StringScanner.new rtf
-			# require \fromhtml. is this worth keeping?
+			# require \fromhtml. is this worth keeping? apparently you see \\fromtext if it
+			# was converted from plain text. 
 			return nil unless rtf["\\fromhtml"]
 			html = ''
 			ignore_tag = nil

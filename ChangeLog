@@ -16,9 +16,8 @@
   conversion code.
 - Add decent set of Mapi and Msg unit tests, approaching ~55% code coverage,
   not including pst.
-- Rip out custom Mime class and replace with TMail. Will want to wait until
-  new tmail release comes out with the TMail::Mail#to_tree addition, and
-  also fix gem install on windows, which seems broken at the moment.
+- Add TMail note conversion alternative, to eventually allow removal of
+  custom Mime class.
 
 == 1.3.1 / 2007-08-21
 

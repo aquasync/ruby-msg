@@ -1,4 +1,7 @@
-require 'mapi/convert/note'
+# we have two different "backends" for note conversion. we're sticking with
+# the current (home grown) mime one until the tmail version is suitably
+# polished.
+require 'mapi/convert/note-mime'
 require 'mapi/convert/contact'
 
 module Mapi

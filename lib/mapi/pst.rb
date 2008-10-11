@@ -138,7 +138,7 @@ class Pst
 				#   [[[2, 0], 61], [[2, 0], 76], [[2, 0], 195], [[2, 0], 257], [[8, 0], 305], [[128, 0], 338], [[128, 0], 357]]
 				# i have only 2 psts to base this guess on, so i can't really come up with anything that looks reasonable yet. not sure what the offset is. unfortunately there is so much in the header
 				# that isn't understood...
-				@encrypt_type = 0
+				@encrypt_type = 1
 
 				@index2_count, @index2 = data[SECOND_POINTER_64 - 4, 8].unpack('V2')
 				@index1_count, @index1 = data[INDEX_POINTER_64  - 4, 8].unpack('V2')
