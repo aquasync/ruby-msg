@@ -284,6 +284,11 @@ class Pst
 		@header.encrypted?
 	end
 
+	# until i properly fix logging...
+	def warn s
+		Mapi::Log.warn s
+	end
+
 	#
 	# this is the index and desc record loading code
 	# ----------------------------------------------------------------------------
@@ -834,6 +839,11 @@ class Pst
 				next if @id_from_id2[id2.id2]
 				@id_from_id2[id2.id2] = id2.id
 			end
+		end
+
+		# TODO: fix logging
+		def warn s
+			Mapi::Log.warn s
 		end
 
 		# corresponds to:
@@ -1549,7 +1559,7 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 0x2 is for folders, and 0x8 is for special things like rules etc, that aren't visible.
 =end
 			unless type
-				type = props.valid_folder_mask || ipm_subtree_entryid || props.content_count || props.subfolders ? :folder : :item
+				type = props.valid_folder_mask || ipm_subtree_entryid || props.content_count || props.subfolders ? :folder : :message
 				if type == :folder
 					type = desc.pst.special_folder_ids[desc.desc_id] || type
 				end
@@ -1660,7 +1670,7 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 #			attrs = %w[display_name valid_folder_mask ipm_wastebasket_entryid finder_entryid content_count subfolders]
 			str = attrs.map { |a| b = props.send a; " #{a}=#{b.inspect}" if b }.compact * ','
 
-			type_s = type == :item ? 'Item' : type == :folder ? 'Folder' : type.to_s.capitalize + 'Folder'
+			type_s = type == :message ? 'Message' : type == :folder ? 'Folder' : type.to_s.capitalize + 'Folder'
 			str2 = 'desc_id=0x%x' % @desc.desc_id
 
 			!str.empty? ? "#<Pst::#{type_s} #{str2}#{str}>" : "#<Pst::#{type_s} #{str2} props=#{props.inspect}>" #\n" + props.transport_message_headers + ">"
@@ -1792,29 +1802,6 @@ which confirms my belief that the block size for idx and desc is more likely 512
 	
 	def inspect
 		"#<Pst name=#{name.inspect} io=#{io.inspect}>"
-	end
-
-	def export root='./'
-		require 'fileutils'
-		each do |item|
-			next unless item.type == :item and item.props.message_class =~ /note/i
-			mbox = "#{root}/#{item.path}.mbox"
-			FileUtils.mkdir_p File.dirname(mbox)
-			puts "%p => %s" % [item, mbox]
-			# copied from msgtool
-			open mbox, 'a' do |f|
-				f.puts "From msgtool@ruby-msg #{Time.now.rfc2822}"
-				item.to_mime.to_s.each do |line|
-					# we do the append > style mbox quoting (mboxrd i think its called), as it
-					# is the only one that can be robuslty un-quoted. evolution doesn't use this!
-					if line =~ /^>*From /o
-						f.print '>' + line
-					else
-						f.print line
-					end
-				end
-			end
-		end
 	end
 end
 end

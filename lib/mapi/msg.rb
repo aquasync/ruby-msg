@@ -390,7 +390,7 @@ module Mapi
 
 				@obj.children.each do |child|
 					# temp hack. PropertyStore doesn't do directory properties atm - FIXME
-					if child.dir? and child.name =~ Properties::SUBSTG_RX and
+					if child.dir? and child.name =~ PropertyStore::SUBSTG_RX and
 						 $1 == '3701' and $2.downcase == '000d'
 						@embedded_ole = child
 						class << @embedded_ole

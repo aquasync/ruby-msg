@@ -3,10 +3,10 @@ require 'mapi/property_set'
 
 module Mapi
 	#
-	# Mapi::Object is the base class used for all mapi objects, and is purely a
+	# Mapi::Item is the base class used for all mapi objects, and is purely a
 	# property set container
 	#
-	class Object
+	class Item
 		attr_reader :properties
 		alias props properties
 
@@ -17,7 +17,7 @@ module Mapi
 	end
 
 	# a general attachment class. is subclassed by Msg and Pst attachment classes
-	class Attachment < Object
+	class Attachment < Item
 		def filename
 			props.attach_long_filename || props.attach_filename
 		end
@@ -43,7 +43,7 @@ module Mapi
 		end
 	end
 	
-	class Recipient < Object
+	class Recipient < Item
 		# some kind of best effort guess for converting to standard mime style format.
 		# there are some rules for encoding non 7bit stuff in mail headers. should obey
 		# that here, as these strings could be unicode
@@ -84,7 +84,7 @@ module Mapi
 	#
 	# IMessage essentially, but there's also stuff like IMAPIFolder etc. so, for this to form
 	# basis for PST Item, it'd need to be more general.
-	class Message < Object
+	class Message < Item
 		# these 2 collections should be provided by our subclasses
 		def attachments
 			raise NotImplementedError

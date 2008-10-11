@@ -251,7 +251,8 @@ module Mapi
 				end
 				io.string
 			else
-				data.read.to_s
+				# FIXME: shouldn't be required
+				data.read.to_s rescue ''
 			end
 			mime.body.replace @embedded_msg ? data_str : Base64.encode64(data_str).gsub(/\n/, "\r\n")
 			mime
