@@ -2,6 +2,8 @@ require 'mapi/types'
 require 'mapi/property_set'
 
 module Mapi
+	VERSION = '1.4.0'
+
 	#
 	# Mapi::Item is the base class used for all mapi objects, and is purely a
 	# property set container

@@ -12,8 +12,6 @@ module Mapi
 	# The core of the work is done by the <tt>Msg::PropertyStore</tt> class.
 	#
 	class Msg < Message
-		VERSION = '1.4.0'
-
 		#
 		# = Introduction
 		#

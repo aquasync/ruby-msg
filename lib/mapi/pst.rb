@@ -63,8 +63,6 @@ require 'ole/ranges_io'
 
 module Mapi
 class Pst
-	VERSION = '0.6.0'
-
 	class FormatError < StandardError
 	end
 

@@ -1,4 +1,4 @@
-== 1.3.2 / ...
+== 1.4.0 / 2008-10-12
 
 - Initial simple msg test case.
 - Update TODO, stripping out all the redundant ole stuff.
@@ -18,6 +18,7 @@
   not including pst.
 - Add TMail note conversion alternative, to eventually allow removal of
   custom Mime class.
+- Expose experimental pst support through renamed mapitool program.
 
 == 1.3.1 / 2007-08-21
 
