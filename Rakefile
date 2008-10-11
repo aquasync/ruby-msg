@@ -11,7 +11,7 @@ $:.unshift 'lib'
 require 'mapi/msg'
 
 PKG_NAME = 'ruby-msg'
-PKG_VERSION = Mapi::Msg::VERSION
+PKG_VERSION = Mapi::VERSION
 
 task :default => [:test]
 
@@ -54,7 +54,7 @@ spec = Gem::Specification.new do |s|
 	s.homepage    = %q{http://code.google.com/p/ruby-msg}
 	s.rubyforge_project = %q{ruby-msg}
 
-	s.executables = ['msgtool']
+	s.executables = ['mapitool']
 	s.files       = FileList['data/*.yaml', 'Rakefile', 'README', 'FIXES']
 	s.files      += FileList['lib/**/*.rb', 'test/test_*.rb', 'bin/*']
 	
