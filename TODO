@@ -1,5 +1,8 @@
 = Newer Msg
 
+* a lot of the doc is out of sync given the Mapi:: changes lately. need to
+  fix.
+
 * extend msgtool with support for the other kinds of msg files. things like, 
   - dump properties to yaml / xml (with option on how the keys should be dumped).
     should be fairly easy to implement. hash, with array of attach & recips.

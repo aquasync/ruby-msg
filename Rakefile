@@ -48,7 +48,7 @@ spec = Gem::Specification.new do |s|
 	s.name        = PKG_NAME
 	s.version     = PKG_VERSION
 	s.summary     = %q{Ruby Msg library.}
-	s.description = %q{A library for reading Outlook msg files, and for converting them to RFC2822 emails.}
+	s.description = %q{A library for reading and converting Outlook msg and pst files (mapi message stores).}
 	s.authors     = ["Charles Lowe"]
 	s.email       = %q{aquasync@gmail.com}
 	s.homepage    = %q{http://code.google.com/p/ruby-msg}
@@ -64,7 +64,7 @@ spec = Gem::Specification.new do |s|
 					   '--title', "#{PKG_NAME} documentation",
 					   '--tab-width', '2']
 
-	s.add_dependency 'ruby-ole', '>=1.2.4'
+	s.add_dependency 'ruby-ole', '>=1.2.8'
 	s.add_dependency 'vpim', '>=0.360'
 end
 

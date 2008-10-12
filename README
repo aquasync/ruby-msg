@@ -1,19 +1,15 @@
 = Introduction
 
-Generally, the goal of the project is the conversion of .msg files
-into proper rfc2822 emails, independent of outlook, or any platform
-dependencies etc. In fact its currently pure ruby, so it should be
-easy to get started with.
+Generally, the goal of the project is to enable the conversion of
+msg and pst files into standards based formats, without reliance on
+outlook, or any platform dependencies. In fact its currently <em>pure
+ruby</em>, so it should be easy to get running.
 
-There's also work-in-progess pst support (unfortunately outlook 97
-only currently), based on libpst, making this project more of a general
-ruby mapi message store conversion library now (though some significant
-cleaning up has to happen first).
-
-It draws on <tt>msgconvert.pl</tt>, but tries to take a cleaner and
-more complete approach. Neither are complete yet, however, but I think
-that this project provides a clean foundation upon which to work on
-a good converter for msg files for use in outlook migrations etc.
+It is targeted at people who want to migrate their PIM data from outlook,
+converting msg and pst files into rfc2822 emails, vCard contacts,
+iCalendar appointments etc. However, it also aims to be a fairly complete
+mapi message store manipulation library, providing a sane model for
+(currently read-only) access to msg and pst files (message stores).
 
 I am happy to accept patches, give commit bits etc.
 
@@ -23,53 +19,60 @@ Please let me know how it works for you, any feedback would be welcomed.
 
 Broad features of the project:
 
-* Can be used as a general msg library, where conversion to and working
+* Can be used as a general mapi library, where conversion to and working
   on a standard format doesn't make sense.
 
-* Supports conversion of msg files to standard formats, like rfc2822
-  emails, vCards, etc.
+* Supports conversion of messages to standard formats, like rfc2822
+  emails, vCard, etc.
 
 * Well commented, and easily extended.
+
+* Basic RTF converter, for providing a readable body when only RTF
+  exists (needs work)
+
+* RTF decompression support included, as well as HTML extraction from
+  RTF where appropriate (both in pure ruby, see <tt>lib/mapi/rtf.rb</tt>)
+
+* Support for mapping property codes to symbolic names, with many
+  included.
+
+Features of the msg format message store:
 
 * Most key .msg structures are understood, and the only the parsing
   code should require minor tweaks. Most of remaining work is in achieving
   high-fidelity conversion to standards formats (see [TODO]).
 
-Features of the lower-level msg handling:
-
 * Supports both types of property storage (large ones in +substg+
-  files, and small ones in the +properties+ file).
+  files, and small ones in the +properties+ file.
 
 * Complete support for named properties in different GUID namespaces.
-
-* Support for mapping property codes to symbolic names, with many
-  included.
-
-* RTF decompression support included, as well as HTML extraction from
-  RTF where appropriate (both in pure ruby, see <tt>lib/msg/rtf.rb</tt>)
-
-* Initial RTF converter, for providing a readable body when only RTF
-  exists (needs work)
 
 * Initial support for handling embedded ole files, converting nested
   .msg files to message/rfc822 attachments, and serializing others
   as ole file attachments (allows you to view embedded excel for example).
 
+Features of the pst format message store:
+
+* Handles both Outlook 1997 & 2003 format pst files, both with no-
+  and "compressible-" encryption.
+
+* Understanding of the file format is still very superficial.
+
 = Usage
 
-At the command line, it is simple to convert individual msg files
-to .eml, or to convert a batch to an mbox format file. See help for
-details:
+At the command line, it is simple to convert individual msg or pst
+files to .eml, or to convert a batch to an mbox format file. See mapitool
+help for details:
 
-  msgtool -c some_email.msg > some_email.eml
-  msgtool -m *.msg > mbox
+  mapitool -si some_email.msg > some_email.eml
+  mapitool -s *.msg > mbox
 
 There is also a fairly complete and easy to use high level library
 access:
 
-  require 'msg'
+  require 'mapi/msg'
   
-  msg = Msg.open filename
+  msg = Mapi::Msg.open filename
   
   # access to the 3 main data stores, if you want to poke with the msg
   # internals
@@ -101,6 +104,16 @@ support conversion to mime objects.
   # inclusive of attachments etc. (not ideal in memory, but its wip).
   puts mime.to_s
 
+= Thanks
+
+* The initial implementation of parsing msg files was based primarily
+  on msgconvert.pl[http://www.matijs.net/software/msgconv/].
+
+* The basis for the outlook 97 pst file was the source to +libpst+.
+
+* The code for rtf decompression was implemented by inspecting the
+  algorithm used in the +JTNEF+ project.
+
 = Other
 
 For more information, see
@@ -109,8 +122,7 @@ For more information, see
 
 * MsgDetails[http://code.google.com/p/ruby-msg/wiki/MsgDetails]
 
-* OleDetails[http://code.google.com/p/ruby-ole/wiki/OleDetails]
+* PstDetails[http://code.google.com/p/ruby-msg/wiki/PstDetails]
 
-* msgconv[http://www.matijs.net/software/msgconv/], the original
-  perl converter.
+* OleDetails[http://code.google.com/p/ruby-ole/wiki/OleDetails]
 
