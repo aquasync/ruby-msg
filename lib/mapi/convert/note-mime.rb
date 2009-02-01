@@ -81,9 +81,9 @@ module Mapi
 			recips_by_type = recipients.group_by { |r| r.type }
 			# i want to the the types in a specific order.
 			[:to, :cc, :bcc].each do |type|
-				# don't know why i bother, but if we can, we try to sort recipients by the numerical part
-				# of the ole name, or just leave it if we can't
-				recips = recips_by_type[type]
+				# for maximal (probably pointless) fidelity, we try to sort recipients by the
+				# numerical part of the ole name
+				recips = recips_by_type[type] || []
 				recips = (recips.sort_by { |r| r.obj.name[/\d{8}$/].hex } rescue recips)
 				# switched to using , for separation, not ;. see issue #4
 				# recips.empty? is strange. i wouldn't have thought it possible, but it was right?

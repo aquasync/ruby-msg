@@ -2,6 +2,14 @@ require 'stringio'
 require 'strscan'
 require 'rtf'
 
+class StringIO # :nodoc:
+	begin
+		instance_method :getbyte
+	rescue NameError
+		alias getbyte getc
+	end
+end
+
 module Mapi
 	#
 	# = Introduction
@@ -46,9 +54,9 @@ module Mapi
 				flags = nil
 				while rtf.length < uncompr_size and !io.eof?
 					# each flag byte flags 8 literals/references, 1 per bit
-					flags = ((flag_count += 1) % 8 == 0) ? io.getc : flags >> 1
+					flags = ((flag_count += 1) % 8 == 0) ? io.getbyte : flags >> 1
 					if 1 == (flags & 1) # each flag bit is 1 for reference, 0 for literal
-						rp, l = io.getc, io.getc
+						rp, l = io.getbyte, io.getbyte
 						# offset is a 12 byte number. 2^12 is 4096, so thats fine
 						rp = (rp << 4) | (l >> 4) # the offset relative to block start
 						l = (l & 0xf) + 2 # the number of bytes to copy
@@ -58,7 +66,7 @@ module Mapi
 							rp = (rp + 1) % 4096
 						end
 					else
-						rtf << buf[wp] = io.getc
+						rtf << buf[wp] = io.getbyte.chr
 						wp = (wp + 1) % 4096
 					end
 				end

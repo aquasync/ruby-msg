@@ -193,8 +193,8 @@ module Mapi
 					pseudo_prop = 0x8000 + offset
 					named = flags & 1 == 1
 					prop = if named
-						str_off = *str.unpack('V')
-						len = *names_data[str_off, 4].unpack('V')
+						str_off = str.unpack('V').first
+						len = names_data[str_off, 4].unpack('V').first
 						Ole::Types::FROM_UTF16.iconv names_data[str_off + 4, len]
 					else
 						a, b = str.unpack('v2')

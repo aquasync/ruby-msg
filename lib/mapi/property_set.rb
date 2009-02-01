@@ -249,7 +249,7 @@ module Mapi
 		# for providing rtf decompression
 		def body_rtf
 			return @body_rtf if defined?(@body_rtf)
-			@body_rtf = (RTF.rtfdecompr rtf_compressed.read rescue nil)
+			@body_rtf = (RTF.rtfdecompr rtf_compressed.read)# rescue nil)
 		end
 
 		# for providing rtf to html conversion
