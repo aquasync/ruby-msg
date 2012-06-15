@@ -249,18 +249,38 @@ module Mapi
 		# for providing rtf decompression
 		def body_rtf
 			return @body_rtf if defined?(@body_rtf)
-			@body_rtf = (RTF.rtfdecompr rtf_compressed.read)# rescue nil)
+			@body_rtf = nil
+			if self[:rtf_compressed]
+				begin
+					@body_rtf = RTF.rtfdecompr self[:rtf_compressed].read
+				rescue
+					Log.warn 'unable to decompress rtf'
+				end
+			end
+			@body_rtf
 		end
 
-		# for providing rtf to html conversion
+		# for providing rtf to html extraction or conversion
 		def body_html
 			return @body_html if defined?(@body_html)
-			@body_html = (self[:body_html].read rescue nil)
-			@body_html = (RTF.rtf2html body_rtf rescue nil) if !@body_html or @body_html.strip.empty?
-			# last resort
-			if !@body_html or @body_html.strip.empty?
-				Log.warn 'creating html body from rtf'
-				@body_html = (::RTF::Converter.rtf2text body_rtf, :html rescue nil)
+			@body_html = self[:body_html]
+			# sometimes body_html is a stream, and sometimes a string
+			@body_html = @body_html.read if @body_html.respond_to?(:read)
+			@body_html = nil if @body_html.to_s.strip.empty?
+			if body_rtf and !@body_html
+				begin
+					@body_html = RTF.rtf2html body_rtf
+				rescue
+					Log.warn 'unable to extract html from rtf'
+				end
+				if !@body_html
+					Log.warn 'creating html body from rtf'
+					begin
+						@body_html = ::RTF::Converter.rtf2text body_rtf, :html
+					rescue
+						Log.warn 'unable to convert rtf to html'
+					end
+				end
 			end
 			@body_html
 		end
