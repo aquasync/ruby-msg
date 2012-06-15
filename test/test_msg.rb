@@ -5,6 +5,7 @@ $: << "#{TEST_DIR}/../lib"
 
 require 'test/unit'
 require 'mapi/msg'
+require 'mapi/convert'
 
 class TestMsg < Test::Unit::TestCase
 	def test_blammo
@@ -17,12 +18,9 @@ class TestMsg < Test::Unit::TestCase
 			assert_equal 66, msg.properties.raw.length
 			# this is unique named properties
 			assert_equal 48, msg.properties.to_h.length
-			# get the named property keys
-			keys = msg.properties.raw.keys.select { |key| String === key.code }
-			assert_equal '55555555-5555-5555-c000-000000000046', keys[0].guid.format
-			assert_equal 'Yippee555', msg.properties[keys[0]]
-			assert_equal '66666666-6666-6666-c000-000000000046', keys[1].guid.format
-			assert_equal 'Yippee666', msg.properties[keys[1]]
+			# test accessing the named property keys - same name but different namespace
+			assert_equal 'Yippee555', msg.props['Name4', Ole::Types::Clsid.parse('55555555-5555-5555-c000-000000000046')]
+			assert_equal 'Yippee666', msg.props['Name4', Ole::Types::Clsid.parse('66666666-6666-6666-c000-000000000046')]
 		end
 	end
 end
