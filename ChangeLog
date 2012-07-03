@@ -1,3 +1,10 @@
+== 1.5.1 / 2012-07-03
+
+- Fix handling of different body types (issue #14). Was breaking on
+  files without RTF content since 8933c26e, and also failing on files
+  where PR_BODY_HTML was a string rather than a stream.
+- Move classes from RTF into Mapi::RTF (github #4).
+
 == 1.5.0 / 2011-05-18
 
 - Fixes for ruby 1.9.
