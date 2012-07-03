@@ -1,4 +1,3 @@
-require 'rubygems'
 require 'ole/storage'
 require 'mapi'
 require 'mapi/rtf'

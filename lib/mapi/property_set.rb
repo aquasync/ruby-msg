@@ -1,7 +1,6 @@
 require 'yaml'
 require 'mapi/types'
 require 'mapi/rtf'
-require 'rtf'
 
 module Mapi
 	#
@@ -241,7 +240,7 @@ module Mapi
 			# last resort
 			if !@body or @body.strip.empty?
 				Log.warn 'creating text body from rtf'
-				@body = (::RTF::Converter.rtf2text body_rtf rescue nil)
+				@body = (RTF::Converter.rtf2text body_rtf rescue nil)
 			end
 			@body
 		end
@@ -276,7 +275,7 @@ module Mapi
 				if !@body_html
 					Log.warn 'creating html body from rtf'
 					begin
-						@body_html = ::RTF::Converter.rtf2text body_rtf, :html
+						@body_html = RTF::Converter.rtf2text body_rtf, :html
 					rescue
 						Log.warn 'unable to convert rtf to html'
 					end
