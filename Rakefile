@@ -1,77 +1,52 @@
-require 'rake/rdoctask'
+require 'rubygems'
 require 'rake/testtask'
-require 'rake/packagetask'
-require 'rake/gempackagetask'
 
 require 'rbconfig'
 require 'fileutils'
 
-$:.unshift 'lib'
-
-require 'mapi/msg'
-
-PKG_NAME = 'ruby-msg'
-PKG_VERSION = Mapi::VERSION
+spec = eval File.read('ruby-msg.gemspec')
 
 task :default => [:test]
 
-Rake::TestTask.new(:test) do |t|
+Rake::TestTask.new do |t|
 	t.test_files = FileList["test/test_*.rb"] - ['test/test_pst.rb']
 	t.warning = false
 	t.verbose = true
 end
 
 begin
-	require 'rcov/rcovtask'
-	# NOTE: this will not do anything until you add some tests
-	desc "Create a cross-referenced code coverage report"
-	Rcov::RcovTask.new do |t|
-		t.test_files = FileList['test/test*.rb']
-		t.ruby_opts << "-Ilib" # in order to use this rcov
-		t.rcov_opts << "--xrefs"  # comment to disable cross-references
-		t.rcov_opts << "--exclude /usr/local/lib/site_ruby"
+	Rake::TestTask.new(:coverage) do |t|
+		t.test_files = FileList["test/test_*.rb"] - ['test/test_pst.rb']
+		t.warning = false
 		t.verbose = true
+		t.ruby_opts = ['-rsimplecov -e "SimpleCov.start; load(ARGV.shift)"']
 	end
 rescue LoadError
-	# Rcov not available
+	# SimpleCov not available
 end
 
-Rake::RDocTask.new do |t|
-	t.rdoc_dir = 'doc'
-	t.title    = "#{PKG_NAME} documentation"
-	t.options += %w[--main README --line-numbers --inline-source --tab-width 2]
-	t.rdoc_files.include 'lib/**/*.rb'
-	t.rdoc_files.include 'README'
+begin
+	require 'rdoc/task'
+	RDoc::Task.new do |t|
+		t.rdoc_dir = 'doc'
+		t.rdoc_files.include 'lib/**/*.rb'
+		t.rdoc_files.include 'README', 'ChangeLog'
+		t.title    = "#{PKG_NAME} documentation"
+		t.options += %w[--line-numbers --inline-source --tab-width 2]
+		t.main	   = 'README'
+	end
+rescue LoadError
+	# RDoc not available or too old (<2.4.2)
 end
 
-spec = Gem::Specification.new do |s|
-	s.name        = PKG_NAME
-	s.version     = PKG_VERSION
-	s.summary     = %q{Ruby Msg library.}
-	s.description = %q{A library for reading and converting Outlook msg and pst files (mapi message stores).}
-	s.authors     = ["Charles Lowe"]
-	s.email       = %q{aquasync@gmail.com}
-	s.homepage    = %q{http://code.google.com/p/ruby-msg}
-	s.rubyforge_project = %q{ruby-msg}
-
-	s.executables = ['mapitool']
-	s.files       = FileList['data/*.yaml', 'Rakefile', 'README', 'FIXES']
-	s.files      += FileList['lib/**/*.rb', 'test/test_*.rb', 'bin/*']
-	
-	s.has_rdoc    = true
-	s.extra_rdoc_files = ['README']
-	s.rdoc_options += ['--main', 'README',
-					   '--title', "#{PKG_NAME} documentation",
-					   '--tab-width', '2']
-
-	s.add_dependency 'ruby-ole', '>=1.2.8'
-	s.add_dependency 'vpim', '>=0.360'
-end
-
-Rake::GemPackageTask.new(spec) do |p|
-	p.gem_spec = spec
-	p.need_tar = false #true
-	p.need_zip = false
-	p.package_dir = 'build'
+begin
+	require 'rubygems/package_task'
+	Gem::PackageTask.new(spec) do |t|
+		t.need_tar = true
+		t.need_zip = false
+		t.package_dir = 'build'
+	end
+rescue LoadError
+	# RubyGems too old (<1.3.2)
 end
 
