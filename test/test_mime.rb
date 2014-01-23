@@ -1,7 +1,6 @@
 #! /usr/bin/ruby -w
 
-TEST_DIR = File.dirname __FILE__
-$: << "#{TEST_DIR}/../lib"
+$: << File.dirname(__FILE__) + '/../lib'
 
 require 'test/unit'
 require 'mime'
