@@ -3,7 +3,7 @@
 $: << File.dirname(__FILE__) + '/../lib'
 
 require 'test/unit'
-require 'mime'
+require 'mapi/mime'
 
 class TestMime < Test::Unit::TestCase
 	# test out the way it partitions a message into parts
