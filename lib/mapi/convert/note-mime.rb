@@ -1,5 +1,5 @@
 require 'base64'
-require 'mime'
+require 'mapi/mime'
 require 'time'
 
 # there is still some Msg specific stuff in here.

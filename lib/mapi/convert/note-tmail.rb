@@ -3,7 +3,7 @@ require 'tmail'
 
 # these will be removed later
 require 'time'
-require 'mime'
+require 'mapi/mime'
 
 # there is some Msg specific stuff in here.
 
