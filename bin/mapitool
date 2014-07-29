@@ -107,7 +107,7 @@ class Mapitool
 				# is the only one that can be robuslty un-quoted. evolution doesn't use this!
 				f.puts "From mapitool@localhost #{Time.now.rfc2822}"
 				#munge_headers mime, opts
-				data.each do |line|
+				data.lines.each do |line|
 					if line =~ /^>*From /o
 						f.print '>' + line
 					else
