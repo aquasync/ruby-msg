@@ -6,7 +6,6 @@ require 'optparse'
 require 'rubygems'
 require 'mapi/msg'
 require 'mapi/pst'
-require 'mapi/convert'
 require 'time'
 
 class Mapitool
