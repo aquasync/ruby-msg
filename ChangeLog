@@ -1,3 +1,12 @@
+== 1.5.2 / 2014-08-20
+
+- Move mime.rb file to avoid conflicts with mime_types gem (github #7,
+  blerins).
+- Minor fix to mapitool for ruby >= 1.9.
+- Alway require mapi/convert (indirect fix for missed step in README,
+  github #6).
+- Various minor cleanups.
+
 == 1.5.1 / 2012-07-03
 
 - Fix handling of different body types (issue #14). Was breaking on
