@@ -24,8 +24,8 @@
 module Mapi
   class Mime
   	Hash = begin
-  		require 'orderedhash'
-  		OrderedHash
+  		require 'mapi/orderedhash'
+  		Mapi::OrderedHash
   	rescue LoadError
   		Hash
   	end
