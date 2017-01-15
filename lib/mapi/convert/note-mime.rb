@@ -214,7 +214,7 @@ module Mapi
 				next if mime.headers.keys.map(&:downcase).include? key.downcase
 				mime.headers[key] += vals
 			end
-			# just a stupid hack to make the content-type header last, when using OrderedHash
+			# just a stupid hack to make the content-type header last
 			mime.headers['Content-Type'] = mime.headers.delete 'Content-Type'
 
 			mime

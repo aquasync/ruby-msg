@@ -13,7 +13,6 @@
 # = TODO
 #
 # * Better streaming support, rather than an all-in-string approach.
-# * Add +OrderedHash+ optionally, to not lose ordering in headers.
 # * A fair bit remains to be done for this class, its fairly immature. But generally I'd like
 #   to see it be more generally useful.
 # * All sorts of correctness issues, encoding particular.
@@ -23,13 +22,6 @@
 #
 module Mapi
   class Mime
-  	Hash = begin
-  		require 'orderedhash'
-  		OrderedHash
-  	rescue LoadError
-  		Hash
-  	end
-
   	attr_reader :headers, :body, :parts, :content_type, :preamble, :epilogue
 
   	# Create a Mime object using +str+ as an initial serialization, which must contain headers
