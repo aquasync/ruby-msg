@@ -118,11 +118,10 @@ support conversion to mime objects.
 
 For more information, see
 
-* TODO
+* TODO[/aquasync/ruby-msg/wiki/TODO]
 
-* MsgDetails[http://code.google.com/p/ruby-msg/wiki/MsgDetails]
+* MsgDetails[/aquasync/ruby-msg/wiki/MsgDetails]
 
-* PstDetails[http://code.google.com/p/ruby-msg/wiki/PstDetails]
+* PstDetails[/aquasync/ruby-msg/wiki/PstDetails]
 
-* OleDetails[http://code.google.com/p/ruby-ole/wiki/OleDetails]
-
+* OleDetails[/aquasync/ruby-msg/wiki/OleDetails]
