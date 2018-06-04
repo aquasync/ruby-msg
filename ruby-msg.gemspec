@@ -11,20 +11,20 @@ Gem::Specification.new do |s|
 	s.description = %q{A library for reading and converting Outlook msg and pst files (mapi message stores).}
 	s.authors = ['Charles Lowe']
 	s.email = %q{aquasync@gmail.com}
-	s.homepage = %q{http://code.google.com/p/ruby-msg}
+	s.homepage = %q{https://github.com/aquasync/ruby-msg}
 	s.rubyforge_project = %q{ruby-msg}
 
 	s.executables = ['mapitool']
-	s.files  = ['README', 'COPYING', 'Rakefile', 'ChangeLog', 'ruby-msg.gemspec']
+	s.files  = ['README.rdoc', 'COPYING', 'Rakefile', 'ChangeLog', 'ruby-msg.gemspec']
 	s.files += Dir.glob('data/*.yaml')
 	s.files += Dir.glob('lib/**/*.rb')
 	s.files += Dir.glob('test/test_*.rb')
 	s.files += Dir.glob('bin/*')
 
 	s.has_rdoc = true
-	s.extra_rdoc_files = ['README', 'ChangeLog']
+	s.extra_rdoc_files = ['README.rdoc', 'ChangeLog']
 	s.rdoc_options += [
-		'--main', 'README',
+		'--main', 'README.rdoc',
 		'--title', "#{PKG_NAME} documentation",
 		'--tab-width', '2'
 	]
