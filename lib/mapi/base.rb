@@ -30,7 +30,8 @@ module Mapi
 		# a.save open(File.basename(a.filename || 'attachment'), 'wb') 
 		def save io
 			raise "can only save binary data blobs, not ole dirs" if @embedded_ole
-			data.each_read { |chunk| io << chunk }
+			data.rewind
+			io << data.read(8192) until data.eof?
 		end
 
 		def inspect
