@@ -122,7 +122,7 @@ module Mapi
 			end
 		end
 
-		RTF_PREBUF = 
+		RTF_PREBUF =
 			"{\\rtf1\\ansi\\mac\\deff0\\deftab720{\\fonttbl;}" \
 			"{\\f0\\fnil \\froman \\fswiss \\fmodern \\fscript " \
 			"\\fdecor MS Sans SerifSymbolArialTimes New RomanCourier" \
@@ -175,7 +175,7 @@ module Mapi
 			else # unknown magic number
 				raise "Unknown compression type (magic number 0x%08x)" % magic
 			end
-			
+
 			# not sure if its due to a bug in the above code. doesn't seem to be
 			# in my tests, but sometimes there's a trailing null. we chomp it here,
 			# which actually makes the resultant rtf smaller than its advertised
@@ -189,7 +189,7 @@ module Mapi
 		#
 		# Returns +nil+ if it doesn't look like an rtf encapsulated rtf.
 		#
-		# Some cases that the original didn't deal with have been patched up, eg from 
+		# Some cases that the original didn't deal with have been patched up, eg from
 		# this chunk, where there are tags outside of the htmlrtf ignore block.
 		#
 		# "{\\*\\htmltag116 <br />}\\htmlrtf \\line \\htmlrtf0 \\line {\\*\\htmltag84 <a href..."
@@ -229,8 +229,14 @@ module Mapi
 		def rtf2html rtf
 			scan = StringScanner.new rtf
 			# require \fromhtml. is this worth keeping? apparently you see \\fromtext if it
-			# was converted from plain text. 
+			# was converted from plain text.
 			return nil unless rtf["\\fromhtml"]
+      if scan.scan_until(/\\ansicpg/)
+        code_page = "cp" + scan.scan(/\d+/)
+        scan.pos = 0
+      else
+        code_page = 'ascii'
+      end
 			html = ''
 			ignore_tag = nil
 			# skip up to the first htmltag. return nil if we don't ever find one
@@ -270,7 +276,7 @@ module Mapi
 					p :wtf
 				end
 			end
-			html.strip.empty? ? nil : html
+      html.strip.empty? ? nil : html.encode('utf-8', code_page)
 		end
 
 		module_function :rtf2html, :rtfdecompr
