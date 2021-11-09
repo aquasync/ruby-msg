@@ -45,7 +45,7 @@ module Mapi
 			# headers, i think because one recipient was external. the only place the senders email address
 			# exists is in the transport headers. so its maybe not good to overwrite from.
 			# recipients however usually have smtp address available.
-			# maybe we'll do it for all addresses that are smtp? (is that equivalent to 
+			# maybe we'll do it for all addresses that are smtp? (is that equivalent to
 			# sender_email_address !~ /^\//
 			name, email = props.sender_name, props.sender_email_address
 			if props.sender_addrtype == 'SMTP'
@@ -115,7 +115,7 @@ module Mapi
 				# i have no timezone info anyway.
 				# in gmail, i see stuff like 15 Jan 2007 00:48:19 -0000, and it displays as 11:48.
 				# can also add .localtime here if desired. but that feels wrong.
-				headers['Date'] = [Time.iso8601(time.to_s).rfc2822] if time
+				headers['Date'] = [time.rfc2822] if time
 			end
 
 			# some very simplistic mapping between internet message headers and the
@@ -279,9 +279,8 @@ module Mapi
 				# can employ other methods for getting a time. heres one in a similar vein to msgconvert.pl,
 				# ie taking the time from an ole object
 				time = @root.ole.dirents.map { |dirent| dirent.modify_time || dirent.create_time }.compact.sort.last
-				headers['Date'] = [Time.iso8601(time.to_s).rfc2822] if time
+				headers['Date'] = [time.rfc2822] if time
 			end
 		end
 	end
 end
-
