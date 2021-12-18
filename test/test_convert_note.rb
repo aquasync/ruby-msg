@@ -1,10 +1,10 @@
-require 'test/unit'
+require 'minitest/autorun'
 
 $:.unshift File.dirname(__FILE__) + '/../lib'
 require 'mapi'
 require 'mapi/convert'
 
-class TestMapiPropertySet < Test::Unit::TestCase
+class TestMapiPropertySet < Minitest::Test
 	include Mapi
 
 	def test_using_pseudo_properties

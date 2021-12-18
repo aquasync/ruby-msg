@@ -21,7 +21,6 @@ Gem::Specification.new do |s|
 	s.files += Dir.glob('test/test_*.rb')
 	s.files += Dir.glob('bin/*')
 
-	s.has_rdoc = true
 	s.extra_rdoc_files = ['README.rdoc', 'ChangeLog']
 	s.rdoc_options += [
 		'--main', 'README.rdoc',

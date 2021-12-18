@@ -1,0 +1,18 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    ruby-ole (1.2.12.2)
+    vpim (13.11.11)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  ruby-ole
+  vpim
+
+RUBY VERSION
+   ruby 2.6.4p104
+
+BUNDLED WITH
+   1.17.2

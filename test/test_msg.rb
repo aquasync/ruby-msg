@@ -3,11 +3,11 @@
 TEST_DIR = File.dirname __FILE__
 $: << "#{TEST_DIR}/../lib"
 
-require 'test/unit'
+require 'minitest/autorun'
 require 'mapi/msg'
 require 'mapi/convert'
 
-class TestMsg < Test::Unit::TestCase
+class TestMsg < Minitest::Test
 	def test_blammo
 		Mapi::Msg.open "#{TEST_DIR}/test_Blammo.msg" do |msg|
 			assert_equal '"TripleNickel" <TripleNickel@mapi32.net>', msg.from

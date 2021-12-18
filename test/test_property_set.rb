@@ -1,9 +1,9 @@
-require 'test/unit'
+require 'minitest/autorun'
 
 $:.unshift File.dirname(__FILE__) + '/../lib'
 require 'mapi/property_set'
 
-class TestMapiPropertySet < Test::Unit::TestCase
+class TestMapiPropertySet < Minitest::Test
 	include Mapi
 
 	def test_constants
@@ -50,7 +50,7 @@ class TestMapiPropertySet < Test::Unit::TestCase
 		# note that the way things are set up, you can't resolve body though. ie, only
 		# existent (not all-known) properties resolve. maybe this should be changed. it'll
 		# need to be, for <tt>props.body=</tt> to work as it should.
-		assert_equal nil, props.resolve('body')
+		assert_nil props.resolve('body')
 		assert_equal 'the subject', props.subject
 		assert_equal ['some keywords'], props.keywords
 		# other access methods

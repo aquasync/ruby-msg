@@ -1,9 +1,9 @@
-require 'test/unit'
+require 'minitest/autorun'
 
 $:.unshift File.dirname(__FILE__) + '/../lib'
 require 'mapi/types'
 
-class TestMapiTypes < Test::Unit::TestCase
+class TestMapiTypes < Minitest::Test
 	include Mapi
 
 	def test_constants
