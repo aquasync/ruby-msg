@@ -125,7 +125,7 @@ class Pst
 		attr_reader :version
 		def initialize data
 			@magic = data.unpack('N')[0]
-			@index_type = data[INDEX_TYPE_OFFSET]
+			@index_type = data[INDEX_TYPE_OFFSET].ord
 			@version = {0x0e => 1997, 0x17 => 2003}[@index_type]
 
 			if version_2003?
@@ -143,7 +143,7 @@ class Pst
 
 				@size = data[FILE_SIZE_POINTER_64, 4].unpack('V')[0]
 			else
-				@encrypt_type = data[ENC_OFFSET]
+				@encrypt_type = data[ENC_OFFSET].ord
 
 				@index2_count, @index2 = data[SECOND_POINTER - 4, 8].unpack('V2')
 				@index1_count, @index1 = data[INDEX_POINTER  - 4, 8].unpack('V2')
@@ -432,13 +432,13 @@ class Pst
 			buf = io.read BLOCK_SIZE
 			idxs = []
 
-			item_count = buf[ITEM_COUNT_OFFSET_64]
+			item_count = buf[ITEM_COUNT_OFFSET_64].ord
 			raise "have too many active items in index (#{item_count})" if item_count > COUNT_MAX
 
 			#idx = Index.new buf[BACKLINK_OFFSET, Index::SIZE]
 			#raise 'blah 1' unless idx.id == linku1
 
-			if buf[LEVEL_INDICATOR_OFFSET_64] == 0
+			if buf[LEVEL_INDICATOR_OFFSET_64].ord == 0
 				# leaf pointers
 				# split the data into item_count index objects
 				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
@@ -497,13 +497,13 @@ class Pst
 			io.seek offset
 			buf = io.read BLOCK_SIZE
 			descs = []
-			item_count = buf[ITEM_COUNT_OFFSET_64]
+			item_count = buf[ITEM_COUNT_OFFSET_64].ord
 
 			# not real desc
 			#desc = Desc.new buf[BACKLINK_OFFSET, 4]
 			#raise 'blah 1' unless desc.desc_id == linku1
 
-			if buf[LEVEL_INDICATOR_OFFSET_64] == 0
+			if buf[LEVEL_INDICATOR_OFFSET_64].ord == 0
 				# leaf pointers
 				raise "have too many active items in index (#{item_count})" if item_count > COUNT_MAX
 				# split the data into item_count desc objects
@@ -613,13 +613,13 @@ class Pst
 		#_pst_read_block_size(pf, offset, BLOCK_SIZE, &buf, 0, 0) < BLOCK_SIZE)
 		buf = pst_read_block_size offset, Index::BLOCK_SIZE, false
 
-		item_count = buf[ITEM_COUNT_OFFSET]
+		item_count = buf[ITEM_COUNT_OFFSET].ord
 		raise "have too many active items in index (#{item_count})" if item_count > Index::COUNT_MAX
 
 		idx = Index.new buf[BACKLINK_OFFSET, Index::SIZE]
 		raise 'blah 1' unless idx.id == linku1
 
-		if buf[LEVEL_INDICATOR_OFFSET] == 0
+		if buf[LEVEL_INDICATOR_OFFSET].ord == 0
 			# leaf pointers
 			# split the data into item_count index objects
 			buf[0, Index::SIZE * item_count].scan(/.{#{Index::SIZE}}/mo).each_with_index do |data, i|
@@ -706,13 +706,13 @@ class Pst
 		@desc_offsets << offset
 		
 		buf = pst_read_block_size offset, Desc::BLOCK_SIZE, false
-		item_count = buf[ITEM_COUNT_OFFSET]
+		item_count = buf[ITEM_COUNT_OFFSET].ord
 
 		# not real desc
 		desc = Desc.new buf[BACKLINK_OFFSET, 4]
 		raise 'blah 1' unless desc.desc_id == linku1
 
-		if buf[LEVEL_INDICATOR_OFFSET] == 0
+		if buf[LEVEL_INDICATOR_OFFSET].ord == 0
 			# leaf pointers
 			raise "have too many active items in index (#{item_count})" if item_count > Desc::COUNT_MAX
 			# split the data into item_count desc objects
@@ -1222,6 +1222,8 @@ puts ole.root.to_tree
 				offsets = value[4, 4 * num].unpack("V#{num}")
 				value = (offsets + [value.length]).to_enum(:each_cons, 2).map { |from, to| value[from...to] }
 				value.map! { |str| StringIO.new str } if type == 0x1102
+			when 0x1003
+				# PtypMultipleInteger32
 			else
 				name = Mapi::Types::DATA[type].first rescue nil
 				warn '0x%04x %p' % [key, get_data_indirect_io(value).read]
