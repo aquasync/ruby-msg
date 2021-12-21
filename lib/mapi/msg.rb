@@ -113,6 +113,7 @@ module Mapi
 			NAMEID_RX = /^__nameid_version1\.0$/
 			VALID_RX = /#{SUBSTG_RX}|#{PROPERTIES_RX}|#{NAMEID_RX}/
 
+			# @return [Hash]
 			attr_reader :nameid
 
 			def initialize
@@ -121,10 +122,10 @@ module Mapi
 				@cache = {}
 			end
 
-			#--
 			# The parsing methods
-			#++
-
+			#
+			# @param obj [Ole::Storage::Dirent]
+			# @return [PropertyStore]
 			def self.load obj
 				prop = new
 				prop.load obj
@@ -132,6 +133,8 @@ module Mapi
 			end
 
 			# Parse properties from the +Dirent+ obj
+			# 
+			# @param obj [Ole::Storage::Dirent]
 			def load obj
 				# we need to do the nameid first, as it provides the map for later user defined properties
 				if nameid_obj = obj.children.find { |child| child.name =~ NAMEID_RX }
@@ -162,6 +165,8 @@ module Mapi
 			# Read nameid from the +Dirent+ obj, which is used for mapping of named properties keys to
 			# proxy keys in the 0x8000 - 0xffff range.
 			# Returns a hash of integer -> Key.
+			# 
+			# @param obj [Ole::Storage::Dirent]
 			def self.parse_nameid obj
 				remaining = obj.children.dup
 				guids_obj, props_obj, names_obj =
@@ -220,6 +225,11 @@ module Mapi
 
 			# Parse an +Dirent+, as per <tt>msgconvert.pl</tt>. This is how larger properties, such
 			# as strings, binary blobs, and other ole sub-directories (eg nested Msg) are stored.
+			#
+			# @param key [Number]
+			# @param encoding [Number]
+			# @param offset [Number]
+			# @param obj [Ole::Storage::Dirent]
 			def parse_substg key, encoding, offset, obj
 				if (encoding & 0x1000) != 0
 					if !offset
@@ -249,6 +259,8 @@ module Mapi
 
 			# For parsing the +properties+ file. Smaller properties are serialized in one chunk,
 			# such as longs, bools, times etc. The parsing has problems.
+			#
+			# @param obj [Ole::Storage::Dirent]
 			def parse_properties obj
 				data = obj.read
 				# don't really understand this that well...
@@ -275,7 +287,7 @@ module Mapi
 					when '000b' # boolean
 						# again, heaps more data than needed. and its not always 0 or 1.
 						# they are in fact quite big numbers. this is wrong.
-# 					p [property, data[4..-1].unpack('H*')[0]]
+						# p [property, data[4..-1].unpack('H*')[0]]
 						add_property key, data[8, 4].unpack('V')[0] != 0
 					when '0040' # systime
 						# seems to work:
@@ -287,6 +299,9 @@ module Mapi
 				end
 			end
 
+			# @param key [Number]
+			# @param value [Any]
+			# @param pos [Number, nil]
 			def add_property key, value, pos=nil
 				# map keys in the named property range through nameid
 				if Integer === key and key >= 0x8000
@@ -331,11 +346,15 @@ module Mapi
 		RECIP_RX = /^__recip_version1\.0_.*/
 		VALID_RX = /#{PropertyStore::VALID_RX}|#{ATTACH_RX}|#{RECIP_RX}/
 
-		attr_reader :root
+		# @return [Ole::Storage::Dirent]
+		attr_reader :root 
+		# @return [Boolean]
 		attr_accessor :close_parent
 
 		# Alternate constructor, to create an +Msg+ directly from +arg+ and +mode+, passed
 		# directly to Ole::Storage (ie either filename or seekable IO object).
+		#
+		# @return [Ole::Storage::Dirent]
 		def self.open arg, mode=nil
 			msg = new Ole::Storage.open(arg, mode).root
 			# we will close the ole when we are #closed
@@ -349,6 +368,8 @@ module Mapi
 		end
 
 		# Create an Msg from +root+, an <tt>Ole::Storage::Dirent</tt> object
+		#
+		# @param root [Ole::Storage::Dirent]
 		def initialize root
 			@root = root
 			@close_parent = false
@@ -356,6 +377,7 @@ module Mapi
 			Msg.warn_unknown @root
 		end
 
+		# @param obj [Ole::Storage::Dirent]
 		def self.warn_unknown obj
 			# bit of validation. not important if there is extra stuff, though would be
 			# interested to know what it is. doesn't check dir/file stuff.
@@ -367,6 +389,7 @@ module Mapi
 			@root.ole.close if @close_parent
 		end
 
+		# @return [Array<Attachment>]
 		def attachments
 			@attachments ||= @root.children.
 				select { |child| child.dir? and child.name =~ ATTACH_RX }.
@@ -374,6 +397,7 @@ module Mapi
 				select { |attach| attach.valid? }
 		end
 
+		# @return [Array<Recipient>]
 		def recipients
 			@recipients ||= @root.children.
 				select { |child| child.dir? and child.name =~ RECIP_RX }.
@@ -381,9 +405,12 @@ module Mapi
 		end
 
 		class Attachment < Mapi::Attachment
-			attr_reader :obj, :properties
+			# @return [Ole::Storage::Dirent]
+			attr_reader :obj
+			attr_reader :properties
 			alias props :properties
 
+			# @param obj [Ole::Storage::Dirent]
 			def initialize obj
 				@obj = obj
 				@embedded_ole = nil
@@ -419,6 +446,7 @@ module Mapi
 				end
 			end
 
+			# @return [Boolean]
 			def valid?
 				# something i started to notice when handling embedded ole object attachments is
 				# the particularly strange case where there are empty attachments
@@ -432,9 +460,12 @@ module Mapi
 		# think enough to make a vCard out of?
 		#
 		class Recipient < Mapi::Recipient
-			attr_reader :obj, :properties
+			# @return [Ole::Storage::Dirent]
+			attr_reader :obj
+			attr_reader :properties
 			alias props :properties
 
+			# @param obj [Ole::Storage::Dirent]
 			def initialize obj
 				@obj = obj
 				super PropertySet.new(PropertyStore.load(@obj))

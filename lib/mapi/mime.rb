@@ -22,10 +22,24 @@
 #
 module Mapi
   class Mime
-  	attr_reader :headers, :body, :parts, :content_type, :preamble, :epilogue
+	# @return [Hash{String => Array}]
+  	attr_reader :headers
+	# @return [String]
+	attr_reader :body
+	# @return [Mime]
+	attr_reader :parts
+	# @return [String]
+	attr_reader :content_type
+	# @return [String]
+	attr_reader :preamble
+	# @return [String]
+	attr_reader :epilogue
 
   	# Create a Mime object using +str+ as an initial serialization, which must contain headers
   	# and a body (even if empty). Needs work.
+	#
+	# @param str [String]
+	# @param ignore_body [Boolean]
   	def initialize str, ignore_body=false
   		headers, @body = $~[1..-1] if str[/(.*?\r?\n)(?:\r?\n(.*))?\Z/m]
 
@@ -69,16 +83,19 @@ module Mapi
   		end
   	end
 
+	# @return [Boolean]
   	def multipart?
   		@content_type && @content_type =~ /^multipart/ ? true : false
   	end
 
-  	def inspect
+	# @return [String]
+	def inspect
   		# add some extra here.
   		"#<Mime content_type=#{@content_type.inspect}>"
   	end
 
-  	def to_tree
+	# @return [String]
+	def to_tree
   		if multipart?
   			str = "- #{inspect}\n"
   			parts.each_with_index do |part, i|
@@ -93,6 +110,8 @@ module Mapi
   		end
   	end
 
+	# @param opts [Hash]
+	# @return [String]
   	def to_s opts={}
   		opts = {:boundary_counter => 0}.merge opts
   		if multipart?
@@ -111,6 +130,8 @@ module Mapi
   		str << "\r\n" + @body
   	end
 
+	# @param header [String]
+	# @return [Array(String, Hash{String => String})]
   	def self.split_header header
   		# FIXME: haven't read standard. not sure what its supposed to do with " in the name, or if other
   		# escapes are allowed. can't test on windows as " isn't allowed anyway. can be fixed with more
@@ -129,6 +150,8 @@ module Mapi
   	end
 
   	# +i+ is some value that should be unique for all multipart boundaries for a given message
+	#
+	# @return [String]
   	def self.make_boundary i, extra_obj = Mime
   		"----_=_NextPart_#{'%03d' % i}_#{'%08x' % extra_obj.object_id}.#{'%08x' % Time.now}"
   	end

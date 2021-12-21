@@ -21,6 +21,6 @@ rake test
 Docs.
 
 ```bat
-gem install hanna-nouveau
-rdoc -f hanna -o docs\doc -x test -m README.rdoc
+gem install yard
+yardoc -o docs\doc
 ```
