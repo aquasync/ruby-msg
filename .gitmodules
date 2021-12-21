@@ -1,0 +1,4 @@
+[submodule "docs"]
+	path = docs
+	url = https://github.com/HiraokaHyperTools/ruby-msg.git
+	branch = gh-pages

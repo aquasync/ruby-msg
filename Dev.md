@@ -17,3 +17,10 @@ Run unit tests.
 ```sh
 rake test
 ```
+
+Docs.
+
+```bat
+gem install hanna-nouveau
+rdoc -f hanna -o docs\doc
+```
