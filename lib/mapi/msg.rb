@@ -99,13 +99,13 @@ module Mapi
 			# not really good though FIXME
 			# change these to use mapi symbolic const names
 			ENCODINGS = {
-				0x000d =>   proc { |obj| obj }, # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually. in which case we shouldn't get here right?
-				0x001f =>   proc { |obj| Ole::Types::FROM_UTF16.iconv obj.read }, # unicode
+				0x000d =>   proc { |obj, helper| obj }, # seems to be used when its going to be a directory instead of a file. eg nested ole. 3701 usually. in which case we shouldn't get here right?
+				0x001f =>   proc { |obj, helper| Ole::Types::FROM_UTF16.iconv obj.read }, # unicode
 				# ascii
 				# FIXME hack did a[0..-2] before, seems right sometimes, but for some others it chopped the text. chomp
-				0x001e =>   proc { |obj| obj.read.chomp 0.chr },
-				0x0102 =>   proc { |obj| obj.open }, # binary?
-				:default => proc { |obj| obj.open }
+				0x001e =>   proc { |obj, helper| helper.convert_ansi_str(obj.read.chomp 0.chr) },
+				0x0102 =>   proc { |obj, helper| obj.open }, # binary?
+				:default => proc { |obj, helper| obj.open }
 			}
 
 			SUBSTG_RX = /^__substg1\.0_([0-9A-F]{4})([0-9A-F]{4})(?:-([0-9A-F]{8}))?$/
@@ -115,9 +115,13 @@ module Mapi
 
 			# @return [Hash]
 			attr_reader :nameid
+			# @return [Helper]
+			attr_reader :helper
 
-			def initialize
+			# @param helper [Helper]
+			def initialize helper
 				@nameid = nil
+				@helper = helper
 				# not exactly a cache currently
 				@cache = {}
 			end
@@ -125,9 +129,10 @@ module Mapi
 			# The parsing methods
 			#
 			# @param obj [Ole::Storage::Dirent]
+			# @param helper [Helper]
 			# @return [PropertyStore]
-			def self.load obj
-				prop = new
+			def self.load obj, helper
+				prop = new helper
 				prop.load obj
 				prop
 			end
@@ -254,7 +259,7 @@ module Mapi
 					#encoder = proc { |obj| obj.io } #.read }. maybe not a good idea
 					encoder = ENCODINGS[:default]
 				end
-				add_property key, encoder[obj], offset
+				add_property key, encoder[obj, @helper], offset
 			end
 
 			# For parsing the +properties+ file. Smaller properties are serialized in one chunk,
@@ -348,15 +353,20 @@ module Mapi
 
 		# @return [Ole::Storage::Dirent]
 		attr_reader :root 
+		# @return [Helper]
+		attr_reader :helper
 		# @return [Boolean]
 		attr_accessor :close_parent
 
 		# Alternate constructor, to create an +Msg+ directly from +arg+ and +mode+, passed
 		# directly to Ole::Storage (ie either filename or seekable IO object).
 		#
+		# @param arg [Object]
+		# @param mode [Object]
+		# @param helper [Helper]
 		# @return [Ole::Storage::Dirent]
-		def self.open arg, mode=nil
-			msg = new Ole::Storage.open(arg, mode).root
+		def self.open arg, mode=nil, helper=nil
+			msg = new Ole::Storage.open(arg, mode).root, helper || Helper.new
 			# we will close the ole when we are #closed
 			msg.close_parent = true
 			if block_given?
@@ -370,10 +380,12 @@ module Mapi
 		# Create an Msg from +root+, an <tt>Ole::Storage::Dirent</tt> object
 		#
 		# @param root [Ole::Storage::Dirent]
-		def initialize root
+		# @param helper [Helper]
+		def initialize root, helper
 			@root = root
+			@helper = helper
 			@close_parent = false
-			super PropertySet.new(PropertyStore.load(@root))
+			super PropertySet.new(PropertyStore.load(@root, helper))
 			Msg.warn_unknown @root
 		end
 
@@ -393,7 +405,7 @@ module Mapi
 		def attachments
 			@attachments ||= @root.children.
 				select { |child| child.dir? and child.name =~ ATTACH_RX }.
-				map { |child| Attachment.new child }.
+				map { |child| Attachment.new child, helper }.
 				select { |attach| attach.valid? }
 		end
 
@@ -401,7 +413,7 @@ module Mapi
 		def recipients
 			@recipients ||= @root.children.
 				select { |child| child.dir? and child.name =~ RECIP_RX }.
-				map { |child| Recipient.new child }
+				map { |child| Recipient.new child, helper }
 		end
 
 		class Attachment < Mapi::Attachment
@@ -412,12 +424,13 @@ module Mapi
 			alias props :properties
 
 			# @param obj [Ole::Storage::Dirent]
-			def initialize obj
+			# @param helper [Helper]
+			def initialize obj, helper
 				@obj = obj
 				@embedded_ole = nil
 				@embedded_msg = nil
 
-				super PropertySet.new(PropertyStore.load(@obj))
+				super PropertySet.new(PropertyStore.load(@obj, helper))
 				Msg.warn_unknown @obj
 
 				@obj.children.each do |child|
@@ -467,9 +480,10 @@ module Mapi
 			alias props :properties
 
 			# @param obj [Ole::Storage::Dirent]
-			def initialize obj
+			# @param helper [Helper]
+			def initialize obj, helper
 				@obj = obj
-				super PropertySet.new(PropertyStore.load(@obj))
+				super PropertySet.new(PropertyStore.load(@obj, helper))
 				Msg.warn_unknown @obj
 			end
 		end

@@ -113,25 +113,14 @@ module Mapi
   		end
   	end
 
-	# This will make sure that string is 7-bit ascii safe.
-	# 
-	# @private
-	MAKE_SURE_ASCII_SAFE = proc { |body| body.encode("BINARY")  }
-
-	# Make string BINARY safe
-	#
-	# @private
-	MAKE_STRING_BINARY_SAFE = proc { |body| body.bytes.pack("C*") }
-
 	# Compose rfc822 eml file
 	#
 	# @param opts [Hash]
 	# @return [String]
   	def to_s opts={}
   		opts = {:boundary_counter => 0}.merge opts
-		ansi_encoding = opts["ansi_encoding"]
 
-		body_encoder = MAKE_SURE_ASCII_SAFE
+		body_encoder = proc { |body| body.bytes.pack("C*") }
 
   		if multipart?
   			boundary = Mime.make_boundary opts[:boundary_counter] += 1, self
@@ -141,19 +130,16 @@ module Mapi
   			attrs['boundary'] = boundary
   			@headers['Content-Type'] = [([content_type] + attrs.map { |key, val| %{#{key}="#{val}"} }).join('; ')]
 		else
-			if @body.bytes.any? {|byte| !(byte == 9 || byte == 10 || byte == 13 || (32 <= byte && byte <= 126)) }
-				# Because having unsafe ascii chars, appending charset to Content-Type.
-				# Modern mailer will deal with it.
-				content_type, attrs = Mime.split_header @headers['Content-Type'][0]
-				attrs["charset"] = ansi_encoding
+			content_type, attrs = Mime.split_header @headers['Content-Type'][0]
+			case content_type.split("/").first()
+			when "text"
+				attrs["charset"] = @body.encoding.name
 				@headers['Content-Type'] = [([content_type] + attrs.map { |key, val| %{#{key}="#{val}"} }).join('; ')]
-
-				body_encoder = MAKE_STRING_BINARY_SAFE
 			end
   		end
 
 		value_encoder = Proc.new { |val|
-			Mime.to_encoded_word(val, opts["ansi_encoding"])
+			Mime.to_encoded_word(val)
 		}
 
   		str = ''
@@ -167,34 +153,20 @@ module Mapi
 			end
   		end
   		str << "\r\n"
-		str << body_encoder.call(@body) #.bytes.pack("C*") # Convert string from UTF-8 to BINARY encoding
+		str << body_encoder.call(@body)
   	end
 
 	# Compose encoded-word (rfc2047) for non-ASCII text
 	# 
 	# @param str [String]
-	# @param actual_enc [String] String encode name we should assume
 	# @return [String]
 	# @private
-	def self.to_encoded_word str, actual_enc
-		case str.encoding
-		when Encoding::ASCII_8BIT, Encoding::BINARY
-			# This is an actually byte array, not well decoded string.
-			if actual_enc
-				enc_name = actual_enc
-			else
-				# Not specified by user. So falling back to ascii even if this is a binary data.
-				enc_name = "ascii"
-			end
-		else
-			enc_name = str.encoding.to_s
-		end
-
+	def self.to_encoded_word str
 		# We can assume that str can produce valid byte array in regardless of encoding.
 
 		# Check if non-printable characters (including CR/LF) are inside.
 		if str.bytes.any? {|byte| byte <= 31 || 127 <= byte}
-			sprintf("=?%s?B?%s?=", enc_name, Base64.strict_encode64(str))
+			sprintf("=?%s?B?%s?=", str.encoding.name, Base64.strict_encode64(str))
 		else
 			str
 		end

@@ -250,6 +250,10 @@ module Mapi
 			end.join(' ') + '>'
 		end
 
+		def decode_ansi_str str
+			raw.helper.convert_ansi_str str
+		end
+
 		# -----
 		
 		# temporary pseudo tags
@@ -263,7 +267,9 @@ module Mapi
 			# last resort
 			if !@body or @body.strip.empty?
 				Log.warn 'creating text body from rtf'
-				@body = (RTF::Converter.rtf2text body_rtf rescue nil)
+				@body = decode_ansi_str(RTF::Converter.rtf2text body_rtf)
+			rescue
+				nil
 			end
 			@body
 		end
@@ -276,7 +282,7 @@ module Mapi
 			@body_rtf = nil
 			if self[:rtf_compressed]
 				begin
-					@body_rtf = RTF.rtfdecompr self[:rtf_compressed].read
+					@body_rtf = decode_ansi_str(RTF.rtfdecompr self[:rtf_compressed].read)
 				rescue
 					Log.warn 'unable to decompress rtf'
 				end
@@ -295,14 +301,14 @@ module Mapi
 			@body_html = nil if @body_html.to_s.strip.empty?
 			if body_rtf and !@body_html
 				begin
-					@body_html = RTF.rtf2html body_rtf
+					@body_html = decode_ansi_str(RTF.rtf2html body_rtf)
 				rescue
 					Log.warn 'unable to extract html from rtf'
 				end
 				if !@body_html
 					Log.warn 'creating html body from rtf'
 					begin
-						@body_html = RTF::Converter.rtf2text body_rtf, :html
+						@body_html = decode_ansi_str(RTF::Converter.rtf2text body_rtf, :html)
 					rescue
 						Log.warn 'unable to convert rtf to html'
 					end
