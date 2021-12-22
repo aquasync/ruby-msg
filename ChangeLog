@@ -1,3 +1,7 @@
+== 0.1.0 / 2021-12-22
+
+- Rebooting.
+
 == 1.5.2 / 2014-08-20
 
 - Move mime.rb file to avoid conflicts with mime_types gem (github #7,
