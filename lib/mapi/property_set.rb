@@ -267,9 +267,7 @@ module Mapi
 			# last resort
 			if !@body or @body.strip.empty?
 				Log.warn 'creating text body from rtf'
-				@body = decode_ansi_str(RTF::Converter.rtf2text body_rtf)
-			rescue
-				nil
+				@body = decode_ansi_str(RTF::Converter.rtf2text body_rtf) rescue nil
 			end
 			@body
 		end
