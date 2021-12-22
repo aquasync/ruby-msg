@@ -1,3 +1,3 @@
 module Mapi
-	VERSION = '1.5.2'
+	VERSION = '0.1.0'
 end
