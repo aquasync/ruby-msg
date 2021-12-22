@@ -231,6 +231,15 @@ module Mapi
 			# require \fromhtml. is this worth keeping? apparently you see \\fromtext if it
 			# was converted from plain text. 
 			return nil unless rtf["\\fromhtml"]
+
+			last_pos = scan.pos
+			if scan.scan_until(/\\ansicpg/)
+				code_page = "cp" + scan.scan(/\d+/)
+			else
+				code_page = 'ascii'
+			end			
+			scan.pos = last_pos
+
 			html = ''
 			ignore_tag = nil
 			# skip up to the first htmltag. return nil if we don't ever find one
@@ -270,7 +279,7 @@ module Mapi
 					p :wtf
 				end
 			end
-			html.strip.empty? ? nil : html
+			html.strip.empty? ? nil : html.force_encoding(code_page)
 		end
 
 		module_function :rtf2html, :rtfdecompr

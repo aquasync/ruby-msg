@@ -99,8 +99,10 @@ class Mapitool
 
 		filename = make_unique filename
 
+		to_s_opts = {"ansi_encoding" => opts[:ansi_encoding]}
+
 		write_message = proc do |f|
-			data = message.send(pair.first).to_s
+			data = message.send(pair.first).to_s to_s_opts
 			if !opts[:individual] and pair.last == 'eml'
 				# we do the append > style mbox quoting (mboxrd i think its called), as it
 				# is the only one that can be robuslty un-quoted. evolution doesn't use this!
@@ -121,7 +123,8 @@ class Mapitool
 		if opts[:stdout]
 			write_message[STDOUT]
 		else
-			open filename, 'a', &write_message
+			# Using binary mode. On Windows "\r\n" will become "\r\n\r\n" or such.
+			open filename, 'ab', &write_message
 		end
 	end
 
@@ -145,6 +148,7 @@ def mapitool
 		op.on('-s', '--stdout', 'Write all data to stdout') { opts[:stdout] = true }
 		op.on('-f', '--filter-path PATH', 'Only process pst items in PATH') { |path| opts[:filter_path] = path }
 		op.on(      '--enable-pst', 'Turn on experimental PST support') { opts[:enable_pst] = true }
+		op.on('-e', '--ansi-encoding CHARSET', 'Use this text to charset for non Unicode text') { |charset| opts[:ansi_encoding] = charset }
 		#op.on('-d', '--header-default STR', 'Provide a default value for top level mail header') { |hd| opts[:header_defaults] << hd }
 		# --enable-pst
 		op.separator ''

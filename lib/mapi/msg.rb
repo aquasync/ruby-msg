@@ -299,9 +299,9 @@ module Mapi
 				end
 			end
 
-			# @param key [Number]
-			# @param value [Any]
-			# @param pos [Number, nil]
+			# @param key [Integer]
+			# @param value [Object]
+			# @param pos [Integer, nil]
 			def add_property key, value, pos=nil
 				# map keys in the named property range through nameid
 				if Integer === key and key >= 0x8000
@@ -407,6 +407,7 @@ module Mapi
 		class Attachment < Mapi::Attachment
 			# @return [Ole::Storage::Dirent]
 			attr_reader :obj
+			# @return [PropertySet]
 			attr_reader :properties
 			alias props :properties
 

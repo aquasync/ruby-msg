@@ -64,11 +64,18 @@ module Mapi
 		class Key
 			include Constants
 
-			attr_reader :code, :guid
+			# @return [Integer, String]
+			attr_reader :code
+			# @return [Ole::Types::Clsid]
+			attr_reader :guid
+
+			# @param code [Integer, String]
+			# @param guid [Ole::Types::Clsid]
 			def initialize code, guid=PS_MAPI
 				@code, @guid = code, guid
 			end
 
+			# @return [Symbol]
 			def to_sym
 				# hmmm, for some stuff, like, eg, the message class specific range, sym-ification
 				# of the key depends on knowing our message class. i don't want to store anything else
@@ -92,6 +99,7 @@ module Mapi
 				end
 			end
 			
+			# @return [String]
 			def to_s
 				to_sym.to_s
 			end
@@ -102,16 +110,20 @@ module Mapi
 			end
 
 			# this stuff is to allow it to be a useful key
+			#
+			# @return [Integer]
 			def hash
 				[code, guid].hash
 			end
 
+			# @return [Boolean]
 			def == other
 				hash == other.hash
 			end
 
 			alias eql? :==
 
+			# @return [String]
 			def inspect
 				# maybe the way to do this, would be to be able to register guids
 				# in a global lookup, which are used by Clsid#inspect itself, to
@@ -142,16 +154,23 @@ module Mapi
 			hash.update Key.new(key[0], const_get(key[1])) => value
 		end
 
+		# @return [PropertyStore]
 		attr_reader :raw
 	
 		# +raw+ should be an hash-like object that maps <tt>Key</tt>s to values. Should respond_to?
 		# [], keys, values, each, and optionally []=, and delete.
+		#
+		# @param raw [PropertyStore]
 		def initialize raw
 			@raw = raw
 		end
 
 		# resolve +arg+ (could be key, code, string, or symbol), and possible +guid+ to a key.
 		# returns nil on failure
+		#
+		# @param arg [Symbol]
+		# @param guid [Ole::Types::Clsid, nil]
+		# @return [Key]
 		def resolve arg, guid=nil
 			if guid;        Key.new arg, guid
 			else
@@ -167,6 +186,8 @@ module Mapi
 		# pass through the raw properties, but conceivably you could map symbols to keys using the
 		# mapitags directly. problem with that would be that named properties wouldn't map automatically,
 		# but maybe thats not too important.
+		#
+		# @return [Hash{Symbol => Key}]
 		def sym_to_key
 			return @sym_to_key if @sym_to_key
 			@sym_to_key = {}
@@ -234,6 +255,8 @@ module Mapi
 		# temporary pseudo tags
 		
 		# for providing rtf to plain text conversion. later, html to text too.
+		#
+		# @return [String, nil]
 		def body
 			return @body if defined?(@body)
 			@body = (self[:body] rescue nil)
@@ -246,6 +269,8 @@ module Mapi
 		end
 
 		# for providing rtf decompression
+		#
+		# @return [String, nil]
 		def body_rtf
 			return @body_rtf if defined?(@body_rtf)
 			@body_rtf = nil
@@ -260,6 +285,8 @@ module Mapi
 		end
 
 		# for providing rtf to html extraction or conversion
+		#
+		# @return [String, nil]
 		def body_html
 			return @body_html if defined?(@body_html)
 			@body_html = self[:body_html]

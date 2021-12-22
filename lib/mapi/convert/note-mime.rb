@@ -143,6 +143,7 @@ module Mapi
 			define_method(key.downcase) { headers[key].join(' ') if headers.has_key?(key) }
 		end
 
+		# @return [Mime]
 		def body_to_mime
 			# to create the body
 			# should have some options about serializing rtf. and possibly options to check the rtf

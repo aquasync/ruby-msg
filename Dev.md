@@ -22,5 +22,5 @@ Docs.
 
 ```bat
 gem install yard
-yardoc -o docs\doc
+yardoc -o docs\doc -r README.rdoc
 ```

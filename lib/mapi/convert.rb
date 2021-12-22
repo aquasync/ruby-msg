@@ -14,6 +14,9 @@ module Mapi
 		}
 
 		# get the mime type of the message. 
+		#
+		# @return [String] `message/rfc822` and so on
+		# @return [nil] Not known converion way
 		def mime_type
 			case props.message_class #.downcase <- have a feeling i saw other cased versions
 			when 'IPM.Contact'
@@ -31,6 +34,7 @@ module Mapi
 			end
 		end	
 
+		# @return [Object] Use to_s
 		def convert
 			type = mime_type
 			unless pair = CONVERSION_MAP[type]
@@ -42,10 +46,13 @@ module Mapi
 		# should probably be moved to mapi/convert/post
 		class Post
 			# not really sure what the pertinent properties are. we just do nothing for now...
+			#
+			# @param message [Message]
 			def initialize message
 				@message = message
 			end
 
+			# @return [String]
 			def to_s
 				# should maybe handle other types, like html body. need a better format for post
 				# probably anyway, cause a lot of meta data is getting chucked.
@@ -53,6 +60,7 @@ module Mapi
 			end
 		end
 
+		# @return [Post]
 		def to_post
 			Post.new self
 		end
