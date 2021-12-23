@@ -1,0 +1,92 @@
+//------------------------------------------------
+//--- 010 Editor v11.0.1 Binary Template
+//
+//      File: Outlook pst
+//   Authors: kenjiuno
+//   Version: 0.1.0
+//   Purpose: 
+//  Category: 
+// File Mask: *.pst
+//  ID Bytes: 21 42 44 4e
+//   History: 
+//------------------------------------------------
+
+struct Header {
+ DWORD dwMagic;
+ DWORD dwCRCPartial;
+ WORD wMagicClient;
+ WORD wVer;
+ WORD wVerClient;
+ byte bPlatformCreate;
+    byte bPlatformAccess;
+    DWORD dwReserved1;
+    DWORD dwReserved2;
+uint64 bidUnused;
+    uint64 bidNextP;
+    DWORD dwUnique;
+DWORD rgnid[32];
+QWORD qwUnused;
+};
+
+struct BREFNBT {
+QWORD bid;
+QWORD ib;
+};
+struct BREFBBT {
+QWORD bid;
+QWORD ib;
+};
+
+struct Root {
+ULONG dwReserved;
+QWORD ibFileEof;
+QWORD ibAMapLast;
+QWORD cbAMapFree;
+QWORD cbPMapFree;
+BREFNBT nbt;
+BREFBBT bbt;
+byte fAMapValid;
+byte bReserved;
+WORD wReserved;
+DWORD pad;
+};
+
+Header header;
+Root root;
+byte rgbFM[128];
+byte rgbFP[128];
+byte bSentinel;
+byte bCryptMethod             ;
+byte rgbReserved;
+byte pad;
+QWORD bidNextB                 ;
+DWORD dwCRCFull                ;
+
+struct index64 {
+ //24bytes
+ QWORD q1;
+ QWORD q2;
+ WORD w3;
+ WORD w4;
+ DWORD dw5;
+};
+
+struct node64 {
+QWORD start;
+QWORD u1;
+QWORD offset;
+};
+
+struct idx_rec {
+//index64 nodes[20];
+node64 nodes[20];
+byte dummy[8];
+byte item_count; //1e8
+byte dummy2; //1e9
+byte dummy3; //1ea
+byte is_node; //1eb
+byte dummy4[20];
+};
+
+FSeek(root.nbt.ib);
+idx_rec rec;

@@ -251,7 +251,11 @@ module Mapi
 		end
 
 		def decode_ansi_str str
-			raw.helper.convert_ansi_str str
+			if raw.helper
+				raw.helper.convert_ansi_str(str)
+			else
+				str
+			end
 		end
 
 		# -----
