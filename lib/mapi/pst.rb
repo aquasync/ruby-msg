@@ -285,9 +285,9 @@ class Pst
 	attr_reader :io
 	# @return [Header]
 	attr_reader :header
-	# @return [Array<Block32>]
+	# @return [Array<BlockPtr>]
 	attr_reader :blocks
-	# @return [Array<Node32, Node64>]
+	# @return [Array<NodePtr>]
 	attr_reader :nodes
 	# @return [Hash]
 	attr_reader :special_folder_ids
@@ -385,18 +385,22 @@ class Pst
 	# these 3 classes are used to hold various file records
 
 	# pst_index
-	class Block32 < Struct.new(:id, :offset, :size, :u1)
-		UNPACK_STR = 'VVvv'
-		SIZE = 12
+	class BlockPtr < Struct.new(:id, :offset, :size, :u1)
+		UNPACK_STR32 = 'VVvv'
+		UNPACK_STR64 = 'TTvv'
+		SIZE32 = 12
+		SIZE64 = 24
 		BLOCK_SIZE = 512 # index blocks was 516 but bogus
-		COUNT_MAX = 41 # max active items (ITEM_COUNT_OFFSET / Index::SIZE = 41)
+		COUNT_MAX32 = 41 # max active items (ITEM_COUNT_OFFSET / Index::SIZE = 41)
+		COUNT_MAX64 = 20 # bit of a guess really. 512 / 24 = 21, but doesn't leave enough header room
 
 		# @return [Pst]
 		attr_accessor :pst
 
 		# @param data [String, Array]
-		def initialize data
-			data = Pst.unpack data, UNPACK_STR if String === data
+		# @param is64 [Boolean]
+		def initialize data, is64
+			data = Pst.unpack data, (is64 ? UNPACK_STR64 : UNPACK_STR32) if String === data
 			super(*data)
 		end
 
@@ -442,166 +446,17 @@ class Pst
 	ITEM_COUNT_OFFSET_64 = 0x1e8
 	LEVEL_INDICATOR_OFFSET_64 = 0x1eb # diff of 3 between these 2 as above...
 
-	# will maybe inherit from Index64, in order to get the same #type function.
-	class Block64 < Block32
-		UNPACK_STR = 'TTvvV'
-		SIZE = 24
-		BLOCK_SIZE = 512
-		COUNT_MAX = 20 # bit of a guess really. 512 / 24 = 21, but doesn't leave enough header room
-
-		# this is the extra item on the end of the UNPACK_STR above
-		attr_accessor :u2
-
-		# @param data [String, Array]
-		def initialize data
-			data = Pst.unpack data, UNPACK_STR if String === data
-			@u2 = data.pop
-			super data
-		end
-
-		def inspect
-			super.sub(/>$/, ', u2=%p>' % u2)
-		end
-
-		def self.load_chain io, header
-			load_block_rec io, header.block_btree, 0, 0
-		end
-
-		# almost identical to load code for Index, just different offsets and unpack strings.
-		# can probably merge them, or write a generic load_tree function or something.
-		def self.load_block_rec io, offset, linku1, start_val
-			io.seek offset
-			buf = io.read BLOCK_SIZE
-			blocks = []
-
-			#printf "> load_block_rec %10u %u\n", offset, (buf[LEVEL_INDICATOR_OFFSET_64].ord)
-
-			item_count = buf[ITEM_COUNT_OFFSET_64].ord
-			raise "have too many active items in index (#{item_count})" if item_count > COUNT_MAX
-
-			#idx = Index.new buf[BACKLINK_OFFSET, Index::SIZE]
-			#raise 'blah 1' unless idx.id == linku1
-
-			if buf[LEVEL_INDICATOR_OFFSET_64].ord == 0
-				# leaf pointers
-				# split the data into item_count index objects
-				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
-				block = new data
-					# first entry
-					raise 'blah 3' if i == 0 and start_val != 0 and block.id != start_val
-					#idx.pst = self
-					break if block.id == 0
-					blocks << block
-				end
-			else
-				# node pointers
-				# split the data into item_count table pointers
-				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
-					start, u1, offset = Pst.unpack data, 'T3'
-					# for the first value, we expect the start to be equal
-					raise 'blah 3' if i == 0 and start_val != 0 and start != start_val
-					break if start == 0
-					blocks += load_block_rec io, offset, u1, start
-				end
-			end
-
-			#printf "< %d \n", idxs.count
-
-			blocks
-		end
-	end
-
-	# pst_desc
-	class Node64 < Struct.new(:node_id, :block_id, :sub_block_id, :parent_node_id, :u2)
-		UNPACK_STR = 'T3VV'
-		SIZE = 32
-		BLOCK_SIZE = 512 # descriptor blocks was 520 but bogus
-		COUNT_MAX = 15 # guess as per Index64
-
-		include RecursivelyEnumerable
-
-		# @return [Pst]
-		attr_accessor :pst
-		# @return [Array]
-		attr_reader :children
-
-		# @param data [String]
-		def initialize data
-			super(*Pst.unpack(data, UNPACK_STR))
-			@children = []
-		end
-
-		# @return [Block32]
-		def block
-			pst.block_from_id block_id
-		end
-
-		# @return [Block32]
-		def sub_block
-			pst.block_from_id sub_block_id
-		end
-
-		def self.load_chain io, header
-			load_node_rec io, header.node_btree, 0, 0x21
-		end
-
-		def self.load_node_rec io, offset, linku1, start_val
-			io.seek offset
-			buf = io.read BLOCK_SIZE
-			nodes = []
-			item_count = buf[ITEM_COUNT_OFFSET_64].ord
-
-			#printf "> load_node_rec %10u %2u %u\n", offset, item_count, buf[LEVEL_INDICATOR_OFFSET_64].ord
-
-			# not real desc
-			#desc = Desc.new buf[BACKLINK_OFFSET, 4]
-			#raise 'blah 1' unless desc.desc_id == linku1
-
-			if buf[LEVEL_INDICATOR_OFFSET_64].ord == 0
-				# leaf pointers
-				raise "have too many active items in index (#{item_count})" if item_count > COUNT_MAX
-				# split the data into item_count desc objects
-				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
-					node = new data
-					# first entry
-					raise 'blah 3' if i == 0 and start_val != 0 and node.node_id != start_val
-					break if node.node_id == 0
-					nodes << node
-				end
-			else
-				# node pointers
-				raise "have too many active items in index (#{item_count})" if item_count > Block64::COUNT_MAX
-				# split the data into item_count table pointers
-				buf[0, Block64::SIZE * item_count].scan(/.{#{Block64::SIZE}}/mo).each_with_index do |data, i|
-					start, u1, offset = Pst.unpack data, 'T3'
-					# for the first value, we expect the start to be equal note that ids -1, so even for the
-					# first we expect it to be equal. thats the 0x21 (dec 33) desc record. this means we assert
-					# that the first desc record is always 33...
-					# thats because 0x21 is the pst root itself...
-					raise 'blah 3' if i == 0 and start_val != -1 and start != start_val
-					# this shouldn't really happen i'd imagine
-					break if start == 0
-					nodes += load_node_rec io, offset, u1, start
-				end
-			end
-
-			#printf "< %u\n", descs.count
-
-			nodes
-		end
-
-		def each_child(&block)
-			@children.each(&block)
-		end
-	end
-
 	# _pst_table_ptr_struct
 	class TablePtr < Struct.new(:start, :u1, :offset)
-		UNPACK_STR = 'V3'
-		SIZE = 12
+		UNPACK_STR32 = 'V3'
+		UNPACK_STR64 = 'T3'
+		SIZE32 = 12
+		SIZE64 = 24
 
-		def initialize data
-			data = data.unpack(UNPACK_STR) if String === data
+		# @param data [String]
+		# @param is64 [Boolean]
+		def initialize data, is64
+			data = Pst.unpack(data, is64 ? UNPACK_STR64 : UNPACK_STR32) if String === data
 			super(*data)
 		end
 	end
@@ -610,11 +465,14 @@ class Pst
 	# idx_id is a pointer to an idx record which gets the primary data stream for the Desc record.
 	# idx2_id gets you an idx record, that when read gives you an ID2 association list, which just maps
 	# another set of ids to index values
-	class Node32 < Struct.new(:node_id, :block_id, :sub_block_id, :parent_node_id)
-		UNPACK_STR = 'V4'
-		SIZE = 16
+	class NodePtr < Struct.new(:node_id, :block_id, :sub_block_id, :parent_node_id)
+		UNPACK_STR32 = 'V4'
+		UNPACK_STR64 = 'T3V'
+		SIZE32 = 16
+		SIZE64 = 32
 		BLOCK_SIZE = 512 # descriptor blocks was 520 but bogus
-		COUNT_MAX = 31 # max active desc records (ITEM_COUNT_OFFSET / Desc::SIZE = 31)
+		COUNT_MAX64 = 15
+		COUNT_MAX32 = 31 # max active desc records (ITEM_COUNT_OFFSET / Desc::SIZE = 31)
 
 		include ToTree
 
@@ -624,17 +482,19 @@ class Pst
 		# @return [Array]
 		attr_reader :children
 
-		def initialize data
-			super(*data.unpack(UNPACK_STR))
+		# @param data [String]
+		# @param is16 [Boolean]
+		def initialize data, is64
+			super(*Pst.unpack(data, is64 ? UNPACK_STR64 : UNPACK_STR32))
 			@children = []
 		end
 
-		# @return [Block32]
+		# @return [BlockPtr]
 		def block
 			pst.block_from_id block_id
 		end
 
-		# @return [Block32]
+		# @return [BlockPtr]
 		def sub_block
 			pst.block_from_id sub_block_id
 		end
@@ -650,12 +510,7 @@ class Pst
 	def load_block_btree
 		@blocks = []
 		@block_offsets = []
-		if header.version_2003?
-			@blocks = Block64.load_chain io, header
-			@blocks.each { |idx| idx.pst = self }
-		else
-			load_block_rec header.block_btree, header.block_btree_count, 0
-		end
+		load_block_tree header.block_btree, header.block_btree_count, 0
 
 		# we'll typically be accessing by id, so create a hash as a lookup cache
 		@block_from_id = {}
@@ -669,23 +524,27 @@ class Pst
 	#
 	# corresponds to
 	# * _pst_build_id_ptr
-	def load_block_rec offset, linku1, start_val
+	def load_block_tree offset, linku1, start_val
 		@block_offsets << offset
 
 		#_pst_read_block_size(pf, offset, BLOCK_SIZE, &buf, 0, 0) < BLOCK_SIZE)
-		buf = pst_read_block_size offset, Block32::BLOCK_SIZE, false
+		buf = pst_read_block_size offset, BlockPtr::BLOCK_SIZE, false
 
-		item_count = buf[ITEM_COUNT_OFFSET].ord
-		raise "have too many active items in index (#{item_count})" if item_count > Block32::COUNT_MAX
+		item_count = buf[is64 ? ITEM_COUNT_OFFSET_64 : ITEM_COUNT_OFFSET].ord
+		level = buf[is64 ? LEVEL_INDICATOR_OFFSET_64 : LEVEL_INDICATOR_OFFSET].ord
+		count_max = is64 ? BlockPtr::COUNT_MAX64 : BlockPtr::COUNT_MAX32
+		raise "have too many active items in index (#{item_count})" if item_count > count_max
 
-		idx = Block32.new buf[BACKLINK_OFFSET, Block32::SIZE]
-		raise 'blah 1' unless idx.id == linku1
+		this_node_id = is64 ? Pst.unpack(buf[BACKLINK_OFFSET, 8], "T").first : buf[BACKLINK_OFFSET, 4].unpack("V").first
+		raise 'blah 1' unless this_node_id == linku1
 
-		if buf[LEVEL_INDICATOR_OFFSET].ord == 0
+		if level == 0
 			# leaf pointers
+			size = is64 ? BlockPtr::SIZE64 : BlockPtr::SIZE32
+
 			# split the data into item_count index objects
-			buf[0, Block32::SIZE * item_count].scan(/.{#{Block32::SIZE}}/mo).each_with_index do |data, i|
-				idx = Block32.new data
+			buf[0, size * item_count].scan(/.{#{size}}/mo).each_with_index do |data, i|
+				idx = BlockPtr.new data, is64
 				# first entry
 				raise 'blah 3' if i == 0 and start_val != 0 and idx.id != start_val
 				idx.pst = self
@@ -695,14 +554,15 @@ class Pst
 			end
 		else
 			# node pointers
+			size = is64 ? TablePtr::SIZE64 : TablePtr::SIZE32
 			# split the data into item_count table pointers
-			buf[0, TablePtr::SIZE * item_count].scan(/.{#{TablePtr::SIZE}}/mo).each_with_index do |data, i|
-				table = TablePtr.new data
+			buf[0, size * item_count].scan(/.{#{size}}/mo).each_with_index do |data, i|
+				table = TablePtr.new data, is64
 				# for the first value, we expect the start to be equal
 				raise 'blah 3' if i == 0 and start_val != 0 and table.start != start_val
 				# this shouldn't really happen i'd imagine
 				break if table.start == 0
-				load_block_rec table.offset, table.u1, table.start
+				load_block_tree table.offset, table.u1, table.start
 			end
 		end
 	end
@@ -713,7 +573,7 @@ class Pst
 	# * _pst_getID
 	#
 	# @param id [Integer]
-	# @return [Block32]
+	# @return [BlockPtr]
 	def block_from_id id
 		@block_from_id[id]
 	end
@@ -724,12 +584,7 @@ class Pst
 	def load_node_btree
 		@nodes = []
 		@node_offsets = []
-		if header.version_2003?
-			@nodes = Node64.load_chain io, header
-			@nodes.each { |node| node.pst = self }
-		else
-			load_node_rec header.node_btree, header.node_btree_count, 0x21
-		end
+		load_node_tree header.node_btree, header.node_btree_count, 0x21
 
 		# first create a lookup cache
 		@node_from_id = {}
@@ -762,27 +617,36 @@ class Pst
 #		warn "have #{@orphans.length} orphan desc record(s)." unless @orphans.empty?
 	end
 
+	# @return [Boolean]
+	def is64
+		header.version_2003?
+	end
+
 	# load the flat list of desc records recursively
 	#
 	# corresponds to
 	# * _pst_build_desc_ptr
 	# * record_descriptor
-	def load_node_rec offset, linku1, start_val
+	def load_node_tree offset, linku1, start_val
 		@node_offsets << offset
 		
-		buf = pst_read_block_size offset, Node32::BLOCK_SIZE, false
-		item_count = buf[ITEM_COUNT_OFFSET].ord
+		buf = pst_read_block_size offset, NodePtr::BLOCK_SIZE, false
+		item_count = buf[is64 ? ITEM_COUNT_OFFSET_64 : ITEM_COUNT_OFFSET].ord
+		level = buf[is64 ? LEVEL_INDICATOR_OFFSET_64 : LEVEL_INDICATOR_OFFSET].ord
 
 		# not real desc
-		node = Node32.new buf[BACKLINK_OFFSET, 4]
-		raise 'blah 1' unless node.node_id == linku1
+		this_node_id = is64 ? Pst.unpack(buf[BACKLINK_OFFSET, 8], "T").first : buf[BACKLINK_OFFSET, 4].unpack("V").first
+		raise 'blah 1' unless this_node_id == linku1
 
-		if buf[LEVEL_INDICATOR_OFFSET].ord == 0
+		if level == 0
 			# leaf pointers
-			raise "have too many active items in index (#{item_count})" if item_count > Node32::COUNT_MAX
+			size = is64 ? NodePtr::SIZE64 : NodePtr::SIZE32
+			count_max = is64 ? NodePtr::COUNT_MAX64 : NodePtr::COUNT_MAX32
+
+			raise "have too many active items in index (#{item_count})" if item_count > count_max
 			# split the data into item_count desc objects
-			buf[0, Node32::SIZE * item_count].scan(/.{#{Node32::SIZE}}/mo).each_with_index do |data, i|
-				node = Node32.new data
+			buf[0, size * item_count].scan(/.{#{size}}/mo).each_with_index do |data, i|
+				node = NodePtr.new data, is64
 				# first entry
 				raise 'blah 3' if i == 0 and start_val != 0 and node.node_id != start_val
 				# this shouldn't really happen i'd imagine
@@ -791,17 +655,20 @@ class Pst
 			end
 		else
 			# node pointers
-			raise "have too many active items in index (#{item_count})" if item_count > Block32::COUNT_MAX
+			size = is64 ? TablePtr::SIZE64 : TablePtr::SIZE32
+			count_max = is64 ? BlockPtr::COUNT_MAX64 : BlockPtr::COUNT_MAX32
+
+			raise "have too many active items in index (#{item_count})" if item_count > count_max
 			# split the data into item_count table pointers
-			buf[0, TablePtr::SIZE * item_count].scan(/.{#{TablePtr::SIZE}}/mo).each_with_index do |data, i|
-				table = TablePtr.new data
+			buf[0, size * item_count].scan(/.{#{size}}/mo).each_with_index do |data, i|
+				table = TablePtr.new data, is64
 				# for the first value, we expect the start to be equal note that ids -1, so even for the
 				# first we expect it to be equal. thats the 0x21 (dec 33) desc record. this means we assert
 				# that the first desc record is always 33...
 				raise 'blah 3' if i == 0 and start_val != -1 and table.start != start_val
 				# this shouldn't really happen i'd imagine
 				break if table.start == 0
-				load_node_rec table.offset, table.u1, table.start
+				load_node_tree table.offset, table.u1, table.start
 			end
 		end
 	end
@@ -812,7 +679,7 @@ class Pst
 	# * _pst_getDptr
 	#
 	# @param id [Integer]
-	# @return [Node32, Node64]
+	# @return [NodePtr]
 	def node_from_id id
 		@node_from_id[id]
 	end
@@ -878,7 +745,7 @@ class Pst
 			super(*data)
 		end
 
-		# @param block [Block32]
+		# @param block [BlockPtr]
 		# @return [Array]
 		def self.load_chain block
 			buf = block.read
@@ -932,7 +799,7 @@ class Pst
 		end
 	end
 
-	# @param block [Block32]
+	# @param block [BlockPtr]
 	# @return [ID2Mapping]
 	def load_sub_block block
 		if header.version_2003?
@@ -946,7 +813,7 @@ class Pst
 	# corresponds to
 	# * _pst_build_id2
 	#
-	# @param block [Block32]
+	# @param block [BlockPtr]
 	# @return [Array]
 	def load_sub_block_rec block
 		# i should perhaps use a idx chain style read here?
@@ -993,7 +860,7 @@ class Pst
 	# * _pst_ff_getID2data
 	# * _pst_ff_compile_ID
 	#
-	# @param idx [Block32]
+	# @param idx [BlockPtr]
 	# @return [Array]
 	def id2_block_idx_chain idx
 		#p idx
@@ -1075,18 +942,20 @@ class Pst
 		ID2_ATTACHMENTS = 0x671
 		ID2_RECIPIENTS = 0x692
 
-		# @return [Node32, Node64]
+		# @return [NodePtr]
 		attr_reader :node
 		attr_reader :data
 		attr_reader :data_chunks
 		attr_reader :offset_tables
 
-		# @param node [Node32, Node64]
+		# @param node [NodePtr]
 		def initialize node
 			raise FormatError, "unable to get associated index record for #{node.inspect}" unless node.block
 			@node = node
 			#@data = desc.desc.read
-			if Pst::Block32 === node.block
+			#TODO: BAD
+			p node.block
+			if Pst::BlockPtr === node.block
 				#@data = RangesIOIdxChain.new(desc.pst, desc.desc).read
 				idxs = node.pst.id2_block_idx_chain node.block
 				# this gets me the plain index chain.
@@ -1371,7 +1240,7 @@ only remaining issue is test4 recipients of 200044. strange.
 
 		attr_reader :length
 
-		# @param desc [Node32, Node64]
+		# @param desc [NodePtr]
 		def initialize node
 			super
 			raise FormatError, "expected type 1 - got #{@type}" unless @type == 1
@@ -1635,7 +1504,7 @@ only remaining issue is test4 recipients of 200044. strange.
 		attr_accessor :type
 		attr_accessor :parent
 
-		# @param node [Node32, Node64]
+		# @param node [NodePtr]
 		# @param list [Array]
 		# @param type [Object, nil]
 		def initialize node, list, type=nil
@@ -1784,7 +1653,7 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 	# corresponds to
 	# * _pst_parse_item
 	#
-	# @param desc [Node32, Node64]
+	# @param desc [NodePtr]
 	# @return [Item]
 	def pst_parse_item node
 		Item.new node, RawPropertyStore.new(node).to_a
@@ -1814,8 +1683,8 @@ which confirms my belief that the block size for idx and desc is more likely 512
 			file_ranges =
 				# these 3 things, should account for most of the data in the file.
 				[[0, Header::SIZE, 'pst file header']] +
-				@block_offsets.map { |offset| [offset, Block32::BLOCK_SIZE, 'block data'] } +
-				@node_offsets.map { |offset| [offset, Node32::BLOCK_SIZE, 'node data'] } +
+				@block_offsets.map { |offset| [offset, BlockPtr::BLOCK_SIZE, 'block data'] } +
+				@node_offsets.map { |offset| [offset, NodePtr::BLOCK_SIZE, 'node data'] } +
 				@blocks.map { |idx| [idx.offset, idx.size, 'idx id=0x%x (%s)' % [idx.id, idx.type]] }
 			(file_ranges.sort_by { |idx| idx.first } + [nil]).to_enum(:each_cons, 2).each do |(offset, size, name), next_record|
 				# i think there is a padding of the size out to 64 bytes
@@ -1866,7 +1735,7 @@ which confirms my belief that the block size for idx and desc is more likely 512
 		# are stored in entryids. whereas the idx and idx2 could be a bit more volatile.
 		puts '* node tree'
 		# make a dummy root hold everything just for convenience
-		root = Node32.new ''
+		root = NodePtr.new ''
 		def root.inspect; "#<Pst::Root>"; end
 		root.children.replace @orphans
 		# this still loads the whole thing as a string for gsub. should use directo output io
@@ -1880,7 +1749,7 @@ which confirms my belief that the block size for idx and desc is more likely 512
 		root_item.to_tree STDOUT
 	end
 
-	# @return [Node32, Node64]
+	# @return [NodePtr]
 	def root_desc
 		@nodes.first
 	end
