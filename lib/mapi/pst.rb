@@ -310,8 +310,6 @@ class Pst
 		load_node_btree
 		load_xattrib
 
-		#@nodes.each {|x| p x}
-
 		@special_folder_ids = {}
 	end
 
@@ -474,7 +472,7 @@ class Pst
 		def self.load_block_rec io, offset, linku1, start_val
 			io.seek offset
 			buf = io.read BLOCK_SIZE
-			idxs = []
+			blocks = []
 
 			#printf "> load_block_rec %10u %u\n", offset, (buf[LEVEL_INDICATOR_OFFSET_64].ord)
 
@@ -488,12 +486,12 @@ class Pst
 				# leaf pointers
 				# split the data into item_count index objects
 				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
-					idx = new data
+				block = new data
 					# first entry
-					raise 'blah 3' if i == 0 and start_val != 0 and idx.id != start_val
+					raise 'blah 3' if i == 0 and start_val != 0 and block.id != start_val
 					#idx.pst = self
-					break if idx.id == 0
-					idxs << idx
+					break if block.id == 0
+					blocks << block
 				end
 			else
 				# node pointers
@@ -503,13 +501,13 @@ class Pst
 					# for the first value, we expect the start to be equal
 					raise 'blah 3' if i == 0 and start_val != 0 and start != start_val
 					break if start == 0
-					idxs += load_block_rec io, offset, u1, start
+					blocks += load_block_rec io, offset, u1, start
 				end
 			end
 
 			#printf "< %d \n", idxs.count
 
-			idxs
+			blocks
 		end
 	end
 
@@ -534,7 +532,7 @@ class Pst
 		end
 
 		# @return [Block32]
-		def desc
+		def block
 			pst.block_from_id block_id
 		end
 
@@ -550,7 +548,7 @@ class Pst
 		def self.load_node_rec io, offset, linku1, start_val
 			io.seek offset
 			buf = io.read BLOCK_SIZE
-			descs = []
+			nodes = []
 			item_count = buf[ITEM_COUNT_OFFSET_64].ord
 
 			#printf "> load_node_rec %10u %2u %u\n", offset, item_count, buf[LEVEL_INDICATOR_OFFSET_64].ord
@@ -564,11 +562,11 @@ class Pst
 				raise "have too many active items in index (#{item_count})" if item_count > COUNT_MAX
 				# split the data into item_count desc objects
 				buf[0, SIZE * item_count].scan(/.{#{SIZE}}/mo).each_with_index do |data, i|
-					desc = new data
+					node = new data
 					# first entry
-					raise 'blah 3' if i == 0 and start_val != 0 and desc.node_id != start_val
-					break if desc.node_id == 0
-					descs << desc
+					raise 'blah 3' if i == 0 and start_val != 0 and node.node_id != start_val
+					break if node.node_id == 0
+					nodes << node
 				end
 			else
 				# node pointers
@@ -583,13 +581,13 @@ class Pst
 					raise 'blah 3' if i == 0 and start_val != -1 and start != start_val
 					# this shouldn't really happen i'd imagine
 					break if start == 0
-					descs += load_node_rec io, offset, u1, start
+					nodes += load_node_rec io, offset, u1, start
 				end
 			end
 
 			#printf "< %u\n", descs.count
 
-			descs
+			nodes
 		end
 
 		def each_child(&block)
@@ -632,7 +630,7 @@ class Pst
 		end
 
 		# @return [Block32]
-		def desc
+		def block
 			pst.block_from_id block_id
 		end
 
@@ -728,17 +726,17 @@ class Pst
 		@node_offsets = []
 		if header.version_2003?
 			@nodes = Node64.load_chain io, header
-			@nodes.each { |desc| desc.pst = self }
+			@nodes.each { |node| node.pst = self }
 		else
 			load_node_rec header.node_btree, header.node_btree_count, 0x21
 		end
 
 		# first create a lookup cache
 		@node_from_id = {}
- 		@nodes.each do |desc|
-			desc.pst = self
-			warn "there are duplicate desc records with id #{desc.node_id}" if @node_from_id[desc.node_id]
-			@node_from_id[desc.node_id] = desc
+ 		@nodes.each do |node|
+			node.pst = self
+			warn "there are duplicate desc records with id #{node.node_id}" if @node_from_id[node.node_id]
+			@node_from_id[node.node_id] = node
 		end
 
 		# now turn the flat list of loaded desc records into a tree
@@ -746,18 +744,18 @@ class Pst
 		# well, they have no parent, so they're more like, the toplevel descs.
 		@orphans = []
 		# now assign each node to the parents child array, putting the orphans in the above
-		@nodes.each do |desc|
-			parent = @node_from_id[desc.parent_node_id]
+		@nodes.each do |node|
+			parent = @node_from_id[node.parent_node_id]
 			# note, besides this, its possible to create other circular structures.
-			if parent == desc
+			if parent == node
 				# this actually happens usually, for the root_item it appears.
 				#warn "desc record's parent is itself (#{desc.inspect})"
 			# maybe add some more checks in here for circular structures
 			elsif parent
-				parent.children << desc
+				parent.children << node
 				next
 			end
-			@orphans << desc
+			@orphans << node
 		end
 
 		# maybe change this to some sort of sane-ness check. orphans are expected
@@ -776,20 +774,20 @@ class Pst
 		item_count = buf[ITEM_COUNT_OFFSET].ord
 
 		# not real desc
-		desc = Node32.new buf[BACKLINK_OFFSET, 4]
-		raise 'blah 1' unless desc.node_id == linku1
+		node = Node32.new buf[BACKLINK_OFFSET, 4]
+		raise 'blah 1' unless node.node_id == linku1
 
 		if buf[LEVEL_INDICATOR_OFFSET].ord == 0
 			# leaf pointers
 			raise "have too many active items in index (#{item_count})" if item_count > Node32::COUNT_MAX
 			# split the data into item_count desc objects
 			buf[0, Node32::SIZE * item_count].scan(/.{#{Node32::SIZE}}/mo).each_with_index do |data, i|
-				desc = Node32.new data
+				node = Node32.new data
 				# first entry
-				raise 'blah 3' if i == 0 and start_val != 0 and desc.node_id != start_val
+				raise 'blah 3' if i == 0 and start_val != 0 and node.node_id != start_val
 				# this shouldn't really happen i'd imagine
-				break if desc.node_id == 0
-				@nodes << desc
+				break if node.node_id == 0
+				@nodes << node
 			end
 		else
 			# node pointers
@@ -822,15 +820,15 @@ class Pst
 	# corresponds to
 	# * pst_load_extended_attributes
 	def load_xattrib
-		unless desc = node_from_id(0x61)
+		unless node = node_from_id(0x61)
 			warn "no extended attributes desc record found"
 			return
 		end
-		unless desc.desc
+		unless node.block
 			warn "no desc idx for extended attributes"
 			return
 		end
-		if desc.sub_block
+		if node.sub_block
 		end
 		#warn "skipping loading xattribs"
 		# FIXME implement loading xattribs
@@ -858,7 +856,7 @@ class Pst
 	# ----------------------------------------------------------------------------
 	#
 
-	class ID2Assoc < Struct.new(:id2, :id, :table2)
+	class SLBlock < Struct.new(:id2, :id, :table2)
 		UNPACK_STR = 'V3'
 		SIZE = 12
 
@@ -868,10 +866,11 @@ class Pst
 		end
 	end
 
-	class ID2Assoc64 < Struct.new(:id2, :u1, :id, :table2)
+	class SLBlock64 < Struct.new(:id2, :u1, :id, :table2)
 		UNPACK_STR = 'VVT2'
 		SIZE = 24
 
+		# @param data [String, Array]
 		def initialize data
 			if String === data
 				data = Pst.unpack data, UNPACK_STR
@@ -879,8 +878,10 @@ class Pst
 			super(*data)
 		end
 
-		def self.load_chain idx
-			buf = idx.read
+		# @param block [Block32]
+		# @return [Array]
+		def self.load_chain block
+			buf = block.read
 			type, count = buf.unpack 'v2'
 			unless type == 0x0002
 				raise 'unknown id2 type 0x%04x' % type
@@ -891,7 +892,7 @@ class Pst
 				assoc = new buf[8 + SIZE * i, SIZE]
 				id2 << assoc
 				if assoc.table2 != 0
-					id2 += load_chain idx.pst.block_from_id(assoc.table2)
+					id2 += load_chain block.pst.block_from_id(assoc.table2)
 				end
 			end
 			id2
@@ -900,6 +901,9 @@ class Pst
 
 	class ID2Mapping
 		attr_reader :list
+
+		# @param pst [Pst]
+		# @param list [Array]
 		def initialize pst, list
 			@pst = pst
 			@list = list
@@ -928,20 +932,25 @@ class Pst
 		end
 	end
 
-	def load_sub_block idx
+	# @param block [Block32]
+	# @return [ID2Mapping]
+	def load_sub_block block
 		if header.version_2003?
-			id2 = ID2Assoc64.load_chain idx
+			id2 = SLBlock64.load_chain block
 		else
-			id2 = load_sub_block_rec idx
+			id2 = load_sub_block_rec block
 		end
 		ID2Mapping.new self, id2
 	end
 
 	# corresponds to
 	# * _pst_build_id2
-	def load_sub_block_rec idx
+	#
+	# @param block [Block32]
+	# @return [Array]
+	def load_sub_block_rec block
 		# i should perhaps use a idx chain style read here?
-		buf = pst_read_block_size idx.offset, idx.size, false
+		buf = pst_read_block_size block.offset, block.size, false
 		type, count = buf.unpack 'v2'
 		unless type == 0x0002
 			raise 'unknown id2 type 0x%04x' % type
@@ -949,7 +958,7 @@ class Pst
 		end
 		id2 = []
 		count.times do |i|
-			assoc = ID2Assoc.new buf[4 + ID2Assoc::SIZE * i, ID2Assoc::SIZE]
+			assoc = SLBlock.new buf[4 + SLBlock::SIZE * i, SLBlock::SIZE]
 			id2 << assoc
 			if assoc.table2 != 0
 				id2 += load_sub_block_rec block_from_id(assoc.table2)
@@ -1066,25 +1075,25 @@ class Pst
 		ID2_ATTACHMENTS = 0x671
 		ID2_RECIPIENTS = 0x692
 
-		# @param desc [Node32, Node64]
-		attr_reader :desc
+		# @return [Node32, Node64]
+		attr_reader :node
 		attr_reader :data
 		attr_reader :data_chunks
 		attr_reader :offset_tables
 
-		# @param desc [Node32, Node64]
-		def initialize desc
-			raise FormatError, "unable to get associated index record for #{desc.inspect}" unless desc.desc
-			@desc = desc
+		# @param node [Node32, Node64]
+		def initialize node
+			raise FormatError, "unable to get associated index record for #{node.inspect}" unless node.block
+			@node = node
 			#@data = desc.desc.read
-			if Pst::Block32 === desc.desc
+			if Pst::Block32 === node.block
 				#@data = RangesIOIdxChain.new(desc.pst, desc.desc).read
-				idxs = desc.pst.id2_block_idx_chain desc.desc
+				idxs = node.pst.id2_block_idx_chain node.block
 				# this gets me the plain index chain.
 			else
 				# fake desc
 				#@data = desc.desc.read
-				idxs = [desc.desc]
+				idxs = [node.block]
 			end
 
 			@data_chunks = idxs.map { |idx| idx.read }
@@ -1121,9 +1130,9 @@ class Pst
 		# actually be requested unless get_data_indirect actually needs to use it.
 		def sub_block
 			return @sub_block if @sub_block
-			raise FormatError, 'idx2 requested but no idx2 available' unless desc.sub_block
+			raise FormatError, 'idx2 requested but no idx2 available' unless node.sub_block
 			# should check this can't return nil
-			@sub_block = desc.pst.load_sub_block desc.sub_block
+			@sub_block = node.pst.load_sub_block node.sub_block
 		end
 
 		def load_header
@@ -1145,7 +1154,7 @@ class Pst
 			if offset == 0
 				nil
 			elsif (offset & 0xf) == 0xf
-				RangesIOID2.new(desc.pst, offset, sub_block).read
+				RangesIOID2.new(node.pst, offset, sub_block).read
 			else
 				low, high = offset & 0xf, offset >> 4
 				raise FormatError if low != 0 or (high & 0x1) != 0 or (high / 2) > @offset_table.length
@@ -1159,7 +1168,7 @@ class Pst
 				nil
 			elsif (offset & 0xf) == 0xf
 				if sub_block[offset]
-					RangesIOID2.new desc.pst, offset, sub_block
+					RangesIOID2.new node.pst, offset, sub_block
 				else
 					warn "tried to get idx2 record for #{offset} but failed"
 					return StringIO.new('')
@@ -1262,10 +1271,10 @@ looks like it
 				if type == PT_OBJECT and value
 					value = value.read if value.respond_to?(:read)
 					id2, unknown = value.unpack 'V2'
-					io = RangesIOID2.new desc.pst, id2, sub_block
+					io = RangesIOID2.new node.pst, id2, sub_block
 
 					# hacky
-					desc2 = OpenStruct.new(:desc => io, :pst => desc.pst, :sub_block => desc.sub_block, :children => [])
+					desc2 = OpenStruct.new(:node => io, :pst => node.pst, :sub_block => node.sub_block, :children => [])
 					# put nil instead of desc.list_index, otherwise the attachment is attached to itself ad infinitum.
 					# should try and fix that FIXME
 					# this shouldn't be done always. for an attached message, yes, but for an attached
@@ -1363,7 +1372,7 @@ only remaining issue is test4 recipients of 200044. strange.
 		attr_reader :length
 
 		# @param desc [Node32, Node64]
-		def initialize desc
+		def initialize node
 			super
 			raise FormatError, "expected type 1 - got #{@type}" unless @type == 1
 
@@ -1418,7 +1427,7 @@ only remaining issue is test4 recipients of 200044. strange.
 		include Enumerable
 
 		attr_reader :length, :index_data, :data2, :data3, :rec_size
-		def initialize desc
+		def initialize node
 			super
 			raise FormatError, "expected type 2 - got #{@type}" unless @type == 2
 
@@ -1443,7 +1452,7 @@ only remaining issue is test4 recipients of 200044. strange.
 			signature, offset2 = header_data2.unpack 'V2'
 			# ??? seems a bit iffy
 			# there's probably more to the differences than this, and the data2 difference below
-			expect = desc.pst.header.version_2003? ? 0x000404b5 : 0x000204b5
+			expect = node.pst.header.version_2003? ? 0x000404b5 : 0x000204b5
 			raise FormatError, 'unhandled block signature 0x%08x' % signature if signature != expect
 
 			#printf "-- %3u %3u %3u %s\n", b_five_offset, ind2_offset, @offset1, desc
@@ -1480,7 +1489,7 @@ only remaining issue is test4 recipients of 200044. strange.
 
 			# lets try and at least use data2 for a warning for now
 			if data2
-				data2_rec_size = desc.pst.header.version_2003? ? 8 : 6
+				data2_rec_size = node.pst.header.version_2003? ? 8 : 6
 				warn 'somthing seems wrong with data3' unless @length == (data2.length / data2_rec_size)
 			end
 		end
@@ -1529,16 +1538,16 @@ only remaining issue is test4 recipients of 200044. strange.
 		# this value, it is the id2 value to use to get attachment data.
 		PR_ATTACHMENT_ID2 = 0x67f2
 
-		attr_reader :desc, :table
-		def initialize desc
-			@desc = desc
+		attr_reader :node, :table
+		def initialize node
+			@node = node
 			# no super, we only actually want BlockParser2#idx2
 			@table = nil
-			return unless desc.sub_block
-			return unless idx = sub_block[ID2_ATTACHMENTS]
+			return unless node.sub_block
+			return unless block = sub_block[ID2_ATTACHMENTS]
 			# FIXME make a fake desc.
-			@desc2 = OpenStruct.new :desc => idx, :pst => desc.pst, :sub_block => desc.sub_block
-			@table = RawPropertyStoreTable.new @desc2
+			@fake_node = OpenStruct.new :block => block, :pst => node.pst, :sub_block => node.sub_block
+			@table = RawPropertyStoreTable.new @fake_node
 		end
 
 		def to_a
@@ -1551,8 +1560,8 @@ only remaining issue is test4 recipients of 200044. strange.
 				if attachment_id2 = attachment.assoc(PR_ATTACHMENT_ID2)
 					#p attachment_id2.last
 					#p idx2[attachment_id2.last]
-					@desc2.desc = sub_block[attachment_id2.last]
-					RawPropertyStore.new(@desc2).each do |a, b, c|
+					@fake_node.block = sub_block[attachment_id2.last]
+					RawPropertyStore.new(@fake_node).each do |a, b, c|
 						record = attachment.assoc a
 						attachment << record = [] unless record
 						record.replace [a, b, c]
@@ -1566,16 +1575,16 @@ only remaining issue is test4 recipients of 200044. strange.
 	# there is no equivalent to this in libpst. ID2_RECIPIENTS was just guessed given the above
 	# AttachmentTable.
 	class RecipientTable < BlockParser
-		attr_reader :desc, :table
-		def initialize desc
-			@desc = desc
+		attr_reader :node, :table
+		def initialize node
+			@node = node
 			# no super, we only actually want BlockParser2#idx2
 			@table = nil
-			return unless desc.sub_block
-			return unless idx = sub_block[ID2_RECIPIENTS]
+			return unless node.sub_block
+			return unless block = sub_block[ID2_RECIPIENTS]
 			# FIXME make a fake desc.
-			desc2 = OpenStruct.new :desc => idx, :pst => desc.pst, :sub_block => desc.sub_block
-			@table = RawPropertyStoreTable.new desc2
+			fake_node = OpenStruct.new :block => block, :pst => node.pst, :sub_block => node.sub_block
+			@table = RawPropertyStoreTable.new fake_node
 		end
 
 		def to_a
@@ -1626,21 +1635,21 @@ only remaining issue is test4 recipients of 200044. strange.
 		attr_accessor :type
 		attr_accessor :parent
 
-		# @param desc [Node32, Node64]
+		# @param node [Node32, Node64]
 		# @param list [Array]
 		# @param type [Object, nil]
-		def initialize desc, list, type=nil
-			@desc = desc
+		def initialize node, list, type=nil
+			@node = node
 			super Pst.make_property_set(list)
 
 			# this is kind of weird, but the ids of the special folders are stored in a hash
 			# when the root item is loaded
 			if ipm_wastebasket_entryid
-				desc.pst.special_folder_ids[ipm_wastebasket_entryid] = :wastebasket
+				node.pst.special_folder_ids[ipm_wastebasket_entryid] = :wastebasket
 			end
 
 			if finder_entryid
-				desc.pst.special_folder_ids[finder_entryid] = :finder
+				node.pst.special_folder_ids[finder_entryid] = :finder
 			end
 
 			# and then here, those are used, along with a crappy heuristic to determine if we are an
@@ -1654,7 +1663,7 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 			unless type
 				type = props.valid_folder_mask || ipm_subtree_entryid || props.content_count || props.subfolders ? :folder : :message
 				if type == :folder
-					type = desc.pst.special_folder_ids[desc.node_id] || type
+					type = node.pst.special_folder_ids[node.node_id] || type
 				end
 			end
 
@@ -1664,15 +1673,15 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 		def each_child
 			id = ipm_subtree_entryid
 			if id
-				root = @desc.pst.node_from_id id
+				root = @node.pst.node_from_id id
 				raise "couldn't find root" unless root
-				raise 'both kinds of children' unless @desc.children.empty?
+				raise 'both kinds of children' unless @node.children.empty?
 				children = root.children
 				# lets look up the other ids we have.
 				# typically the wastebasket one "deleted items" is in the children already, but
 				# the search folder isn't.
 				extras = [ipm_wastebasket_entryid, finder_entryid].compact.map do |id|
-					root = @desc.pst.node_from_id id
+					root = @node.pst.node_from_id id
 					warn "couldn't find root for id #{id}" unless root
 					root
 				end.compact
@@ -1681,9 +1690,9 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 				children += (extras - children)
 				children
 			else
-				@desc.children
-			end.each do |desc|
-				item = @desc.pst.pst_parse_item(desc)
+				@node.children
+			end.each do |node|
+				item = @node.pst.pst_parse_item(node)
 				item.parent = self
 				yield item
 			end
@@ -1743,12 +1752,12 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 		# it just has to handle the no table at all case a bit more gracefully.
 
 		def attachments
-			@attachments ||= AttachmentTable.new(@desc).to_a.map { |list| Attachment.new list }
+			@attachments ||= AttachmentTable.new(@node).to_a.map { |list| Attachment.new list }
 		end
 
 		def recipients
 			#[]
-			@recipients ||= RecipientTable.new(@desc).to_a.map { |list| Recipient.new list }
+			@recipients ||= RecipientTable.new(@node).to_a.map { |list| Recipient.new list }
 		end
 
 		def each_recursive(&block)
@@ -1766,7 +1775,7 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 			str = attrs.map { |a| b = props.send a; " #{a}=#{b.inspect}" if b }.compact * ','
 
 			type_s = type == :message ? 'Message' : type == :folder ? 'Folder' : type.to_s.capitalize + 'Folder'
-			str2 = 'node_id=0x%x' % @desc.node_id
+			str2 = 'node_id=0x%x' % @node.node_id
 
 			!str.empty? ? "#<Pst::#{type_s} #{str2}#{str}>" : "#<Pst::#{type_s} #{str2} props=#{props.inspect}>" #\n" + props.transport_message_headers + ">"
 		end
@@ -1777,8 +1786,8 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 	#
 	# @param desc [Node32, Node64]
 	# @return [Item]
-	def pst_parse_item desc
-		Item.new desc, RawPropertyStore.new(desc).to_a
+	def pst_parse_item node
+		Item.new node, RawPropertyStore.new(node).to_a
 	end
 
 	#
@@ -1805,8 +1814,8 @@ which confirms my belief that the block size for idx and desc is more likely 512
 			file_ranges =
 				# these 3 things, should account for most of the data in the file.
 				[[0, Header::SIZE, 'pst file header']] +
-				@block_offsets.map { |offset| [offset, Block32::BLOCK_SIZE, 'idx block data'] } +
-				@node_offsets.map { |offset| [offset, Node32::BLOCK_SIZE, 'desc block data'] } +
+				@block_offsets.map { |offset| [offset, Block32::BLOCK_SIZE, 'block data'] } +
+				@node_offsets.map { |offset| [offset, Node32::BLOCK_SIZE, 'node data'] } +
 				@blocks.map { |idx| [idx.offset, idx.size, 'idx id=0x%x (%s)' % [idx.id, idx.type]] }
 			(file_ranges.sort_by { |idx| idx.first } + [nil]).to_enum(:each_cons, 2).each do |(offset, size, name), next_record|
 				# i think there is a padding of the size out to 64 bytes
@@ -1855,7 +1864,7 @@ which confirms my belief that the block size for idx and desc is more likely 512
 		# entryids.
 		# note that these aren't unique! eg for 0, 4 etc. i expect these'd never change, as the ids
 		# are stored in entryids. whereas the idx and idx2 could be a bit more volatile.
-		puts '* desc tree'
+		puts '* node tree'
 		# make a dummy root hold everything just for convenience
 		root = Node32.new ''
 		def root.inspect; "#<Pst::Root>"; end

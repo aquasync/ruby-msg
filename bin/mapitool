@@ -90,7 +90,7 @@ class Mapitool
 				filename = combined_map[pair.last] or raise NotImplementedError
 				filename = (message.path.tr(' /', '_.').gsub(/[^A-Za-z0-9.()\[\]{}-]/, '_') + '.' + File.extname(filename)).squeeze('.')
 			end
-			dir = File.dirname(message.instance_variable_get(:@desc).pst.io.path)
+			dir = File.dirname(message.instance_variable_get(:@node).pst.io.path)
 			filename = File.join dir, filename
 		else
 			raise
