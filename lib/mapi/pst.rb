@@ -274,24 +274,6 @@ class Pst
 		end
 	end
 
-	class RangesIOEncryptable < RangesIO
-		def initialize io, mode='r', params={}
-			mode, params = 'r', mode if Hash === mode
-			@decrypt = !!params[:decrypt]
-			super
-		end
-
-		def encrypted?
-			@decrypt
-		end
-
-		def read limit=nil
-			buf = super
-			buf = CompressibleEncryption.decrypt(buf) if encrypted?
-			buf
-		end
-	end
-
 	# @return [IO]
 	attr_reader :io
 	# @return [Header]
@@ -321,26 +303,6 @@ class Pst
 		load_node_btree
 		load_xattrib
 
-		# blocks.each {|block|
-		# 	p ["bid",block.id]
-		# }
-
-		# to_dir = "H:/Proj/WalkPst/bin/Debug/net6.0/r/"
-		# nodes.each {|node|
-		# 	node.read_main_array.each_with_index {|data,index|
-		# 		open "#{to_dir}/#{node.node_id}.main.#{index}.bin", "wb" do |f|
-		# 			f.write data
-		# 		end
-		# 	}
-		# 	node.get_local_node_list().each {|sub|
-		# 		node.read_sub_array(sub).each_with_index {|data,index|
-		# 			open "#{to_dir}/#{node.node_id}.sub.#{sub}.#{index}.bin", "wb" do |f|
-		# 				f.write data
-		# 			end
-		# 		}
-		# 	}
-		# }
-
 		@special_folder_ids = {}
 	end
 
@@ -359,53 +321,6 @@ class Pst
 	#
 
 	ToTree = Module.new
-
-	module Index2
-		BLOCK_SIZE = 512
-		module RecursiveLoad
-			def load_chain
-				#...
-			end
-		end
-
-		module Base
-			def read
-				#...
-			end
-		end
-
-		class Version1997 < Struct.new(:a)#...)
-			SIZE = 12
-
-			include RecursiveLoad
-			include Base
-		end
-
-		class Version2003 < Struct.new(:a)#...)
-			SIZE = 24
-
-			include RecursiveLoad
-			include Base
-		end
-	end
-
-	module Desc2
-		module Base
-			def desc
-				#...
-			end
-		end
-
-		class Version1997 < Struct.new(:a)#...)
-			#include Index::RecursiveLoad
-			include Base
-		end
-
-		class Version2003 < Struct.new(:a)#...)
-			#include Index::RecursiveLoad
-			include Base
-		end
-	end
 
 	# more constants from libpst.c
 	# these relate to the index block
@@ -795,6 +710,8 @@ class Pst
 		load_sub_block_to node.sub_block_id, local_node_id, list
 	end
 
+	# for debug
+	#
 	# @param node_id [String]
 	# @param list [Array<String>]
 	def get_local_node_list_to node_id, list
@@ -802,6 +719,8 @@ class Pst
 		get_local_node_list_of_sub_block_to node.sub_block_id, list
 	end
 
+	# for debug
+	#
 	# @param sub_block_id [String]
 	# @param list [Array<String>]
 	def get_local_node_list_of_sub_block_to sub_block_id, list
@@ -937,173 +856,6 @@ class Pst
 	# ----------------------------------------------------------------------------
 	#
 
-	class SLBlock < Struct.new(:id2, :id, :table2)
-		UNPACK_STR = 'V3'
-		SIZE = 12
-
-		def initialize data
-			data = data.unpack(UNPACK_STR) if String === data
-			super(*data)
-		end
-	end
-
-	class SLBlock64 < Struct.new(:id2, :u1, :id, :table2)
-		UNPACK_STR = 'VVT2'
-		SIZE = 24
-
-		# @param data [String, Array]
-		def initialize data
-			if String === data
-				data = Pst.unpack data, UNPACK_STR
-			end
-			super(*data)
-		end
-
-		# @param block [BlockPtr]
-		# @return [Array]
-		def self.load_chain block
-			buf = block.read
-			type, count = buf.unpack 'v2'
-			unless type == 0x0002
-				raise 'unknown id2 type 0x%04x' % type
-				#return
-			end
-			id2 = []
-			count.times do |i|
-				assoc = new buf[8 + SIZE * i, SIZE]
-				id2 << assoc
-				if assoc.table2 != 0
-					id2 += load_chain block.pst.block_from_id(assoc.table2)
-				end
-			end
-			id2
-		end
-	end
-
-	class ID2Mapping
-		attr_reader :list
-
-		# @param pst [Pst]
-		# @param list [Array]
-		def initialize pst, list
-			@pst = pst
-			@list = list
-			# create a lookup. 
-			@id_from_id2 = {}
-			@list.each do |id2|
-				# NOTE we take the last value seen value if there are duplicates. this "fixes"
-				# test4-o1997.pst for the time being.
-				warn "there are duplicate id2 records with id #{id2.id2}" if @id_from_id2[id2.id2]
-				next if @id_from_id2[id2.id2]
-				@id_from_id2[id2.id2] = id2.id
-			end
-		end
-
-		# TODO: fix logging
-		def warn s
-			Mapi::Log.warn s
-		end
-
-		# corresponds to:
-		# * _pst_getID2
-		def [] id
-			#id2 = @list.find { |x| x.id2 == id }
-			id = @id_from_id2[id]
-			id and @pst.block_from_id(id)
-		end
-	end
-
-	# @param block [BlockPtr]
-	# @return [ID2Mapping]
-	def load_sub_block block
-		raise "NO SIR"
-		if header.version_2003?
-			id2 = SLBlock64.load_chain block
-		else
-			id2 = load_sub_block_rec block
-		end
-		ID2Mapping.new self, id2
-	end
-
-	# corresponds to
-	# * _pst_build_id2
-	#
-	# @param block [BlockPtr]
-	# @return [Array]
-	def load_sub_block_rec block
-		raise "NO SIR"
-		# i should perhaps use a idx chain style read here?
-		buf = pst_read_block_size block.offset, block.size, false
-		type, count = buf.unpack 'v2'
-		unless type == 0x0002
-			raise 'unknown id2 type 0x%04x' % type
-			#return
-		end
-		id2 = []
-		count.times do |i|
-			assoc = SLBlock.new buf[4 + SLBlock::SIZE * i, SLBlock::SIZE]
-			id2 << assoc
-			if assoc.table2 != 0
-				id2 += load_sub_block_rec block_from_id(assoc.table2)
-			end
-		end
-		id2
-	end
-
-	class RangesIOIdxChain < RangesIOEncryptable
-		def initialize pst, idx_head
-			@idxs = pst.id2_block_idx_chain idx_head
-			# whether or not a given idx needs encrypting
-			decrypts = @idxs.map do |idx|
-				decrypt = (idx.id & 2) != 0 ? false : pst.encrypted?
-			end.uniq
-			raise NotImplementedError, 'partial encryption in RangesIOID2' if decrypts.length > 1
-			decrypt = decrypts.first
-			# convert idxs to ranges
-			ranges = @idxs.map { |idx| [idx.offset, idx.size] }
-			super pst.io, :ranges => ranges, :decrypt => decrypt
-		end
-	end
-
-	class RangesIOID2 < RangesIOIdxChain
-		def self.new pst, id2, sub_block
-			RangesIOIdxChain.new pst, sub_block[id2]
-		end
-	end
-
-	# corresponds to:
-	# * _pst_ff_getID2block
-	# * _pst_ff_getID2data
-	# * _pst_ff_compile_ID
-	#
-	# @param idx [BlockPtr]
-	# @return [Array]
-	def id2_block_idx_chain idx
-		raise "NO SIR"
-		#p idx
-		if (idx.id & 0x2) == 0
-			[idx]
-		else
-			buf = idx.read
-			type, fdepth, count = buf[0, 4].unpack 'CCv'
-			unless type == 1 # libpst.c:3958
-				warn 'Error in idx_chain - %p, %p, %p - attempting to ignore' % [type, fdepth, count]
-				return [idx]
-			end
-			# there are 4 unaccounted for bytes here, 4...8
-			if header.version_2003?
-				ids = buf[8, count * 8].unpack("T#{count}")
-			else
-				ids = buf[8, count * 4].unpack('V*')
-			end
-			if fdepth == 1
-				ids.map { |id| block_from_id id }
-			else
-				ids.map { |id| id2_block_idx_chain block_from_id(id) }.flatten
-			end
-		end
-	end
-
 	#
 	# main block parsing code. gets raw properties
 	# ----------------------------------------------------------------------------
@@ -1185,16 +937,6 @@ class Pst
 			}
 
 			# now, we may have multiple different blocks
-		end
-
-		# a given desc record may or may not have associated idx2 data. we lazily load it here, so it will never
-		# actually be requested unless get_data_indirect actually needs to use it.
-		def sub_block
-			raise "NO NO"
-			return @sub_block if @sub_block
-			raise FormatError, 'idx2 requested but no idx2 available' unless node.sub_block
-			# should check this can't return nil
-			@sub_block = node.pst.load_sub_block node.sub_block
 		end
 
 		# Parse HNPAGEHDR / HNBITMAPHDR
@@ -1492,6 +1234,11 @@ only remaining issue is test4 recipients of 200044. strange.
 		end
 
 		# iterate through the property tuples
+		#
+		# @yield [key, type, value]
+		# @yieldparam [Integer] key
+		# @yieldparam [Integer] type
+		# @yieldparam [Object] value
 		def each
 			length.times do |i|
 				key, type, value = handle_indirect_values(*@index_data[8 * i, 8].unpack('vvV'))
@@ -1542,8 +1289,9 @@ only remaining issue is test4 recipients of 200044. strange.
 		# @return [Integer] 
 		attr_reader :rows_per_page
 
+		# @param node [NodePtr]
+		# @param local_node_id [Integer]
 		def initialize node, local_node_id
-			p ["RPST",node.node_id,local_node_id]
 			super
 			bTypeTC = 0x7c
 			raise FormatError, "expected type 124 - got #{@heap_type}" unless @heap_type == bTypeTC
@@ -1572,8 +1320,6 @@ only remaining issue is test4 recipients of 200044. strange.
 			# there's probably more to the differences than this, and the data2 difference below
 			expect = node.pst.header.version_2003? ? 0x000404b5 : 0x000204b5
 			raise FormatError, 'unhandled block signature 0x%08x' % signature if signature != expect
-
-			#printf "-- %3u %3u %3u %s\n", b_five_offset, ind2_offset, @offset1, desc
 
 			# this holds all the row data
 			# handle multiple block issue.
@@ -1619,10 +1365,15 @@ only remaining issue is test4 recipients of 200044. strange.
 			#end
 		end
 
+		# for debug
+		#
+		# @return [Array<Column>]
 		def schema
 			@schema ||= Pst.split_per(index_data, 8, -1).map { |data| Column.new data }
 		end
 
+		# return grid row
+		#
 		# @param idx [Integer]
 		# @return [Row]
 		def [] idx
@@ -1636,6 +1387,8 @@ only remaining issue is test4 recipients of 200044. strange.
 			length.times { |i| yield self[i] }
 		end
 
+		# get record data
+		#
 		# @param record_index [Integer]
 		# @return [String]
 		def get_record record_index
@@ -1686,7 +1439,7 @@ only remaining issue is test4 recipients of 200044. strange.
 
 		# @return [NodePtr]
 		attr_reader :node
-		# @return [Enumerable<RawPropertyStoreTable::Row>]
+		# @return [RawPropertyStoreTable]
 		attr_reader :table
 
 		def initialize node
@@ -1704,19 +1457,15 @@ only remaining issue is test4 recipients of 200044. strange.
 			end
 		end
 
+		# @return [Array<Array<Array(Integer, Integer, Object)>>]
 		def to_a
 			return [] if !table
 			table.map do |attachment|
 				attachment = attachment.to_a
-				p attachment
 				# potentially merge with yet more properties
 				# this still seems pretty broken - especially the property overlap
 				if attachment_id2 = attachment.assoc(PR_ATTACHMENT_ID2)
-					#p attachment_id2.last
-					#p idx2[attachment_id2.last]
-					p ["attachment hit",node.node_id,attachment_id2]
-
-					# verify existence of record
+					# verify existence of this record
 					if @node.has_sub attachment_id2.last
 						RawPropertyStore.new(@node, attachment_id2.last).each do |a, b, c|
 							record = attachment.assoc a
@@ -1724,10 +1473,7 @@ only remaining issue is test4 recipients of 200044. strange.
 							record.replace [a, b, c]
 						end
 					else
-						# record is missing, it means there is no attachment data in pst! not recoverable.
-						# maybe Outlook failed to access the source file when the file is going to be attached.
-						# e.g. trying to attach a file having invalid file name like `"trailing-space.txt       "`
-						p "NO"
+						warn "attachment record is missing"
 					end
 				end
 				attachment
@@ -1738,7 +1484,12 @@ only remaining issue is test4 recipients of 200044. strange.
 	# there is no equivalent to this in libpst. ID2_RECIPIENTS was just guessed given the above
 	# AttachmentTable.
 	class RecipientTable < BlockParser
-		attr_reader :node, :table
+		# @return [NodePtr]
+		attr_reader :node
+		# @return [RawPropertyStoreTable]
+		attr_reader :table
+
+		# @param node [NodePtr]
 		def initialize node
 			@node = node
 			# no super, we only actually want BlockParser2#idx2
@@ -1755,6 +1506,7 @@ only remaining issue is test4 recipients of 200044. strange.
 
 		end
 
+		# @return [Array<Array<Array(Integer, Integer, Object)>>]
 		def to_a
 			return [] if !table
 			table.map { |x| x.to_a }
@@ -1767,6 +1519,8 @@ only remaining issue is test4 recipients of 200044. strange.
 	# ----------------------------------------------------------------------------
 	#
 
+	# @param property_list [Array<Array(Integer, Integer, Object)>]
+	# @return [PropertySet]
 	def self.make_property_set property_list
 		hash = property_list.inject({}) do |hash, (key, type, value)|
 			hash.update PropertySet::Key.new(key) => value
