@@ -310,11 +310,25 @@ class Pst
 		load_node_btree
 		load_xattrib
 
-		#nodes.each {|node|
-		#	open "H:/Proj/WalkPst/bin/Debug/net6.0/r/#{node.node_id}.main.bin", "wb" do |f|
-		#		f.write node.read_main
-		#	end
-		#}
+		blocks.each {|block|
+			p ["bid",block.id]
+		}
+
+		to_dir = "H:/Proj/WalkPst/bin/Debug/net6.0/r/"
+		nodes.each {|node|
+			node.read_main_array.each_with_index {|data,index|
+				open "#{to_dir}/#{node.node_id}.main.#{index}.bin", "wb" do |f|
+					f.write data
+				end
+			}
+			node.get_local_node_list().each {|sub|
+				node.read_sub_array(sub).each_with_index {|data,index|
+					open "#{to_dir}/#{node.node_id}.sub.#{sub}.#{index}.bin", "wb" do |f|
+						f.write data
+					end
+				}
+			}
+		}
 
 		@special_folder_ids = {}
 	end
@@ -528,6 +542,13 @@ class Pst
 			list
 		end
 
+		# @return [Array<String>]
+		def get_local_node_list
+			list = []
+			pst.get_local_node_list_to node_id, list
+			list
+		end
+
 		# Check if there is a sub data exists, where it is identified by its local id
 		#
 		# @param local_node_id [Integer]
@@ -553,8 +574,9 @@ class Pst
 		# we'll typically be accessing by id, so create a hash as a lookup cache
 		@block_from_id = {}
  		@blocks.each do |idx|
-			warn "there are duplicate idx records with id #{idx.id}" if @block_from_id[idx.id]
-			@block_from_id[idx.id] = idx
+			id = idx.id & ~1
+			warn "there are duplicate idx records with id #{id}" if @block_from_id[id]
+			@block_from_id[id] = idx
 		end
 	end
 
@@ -587,7 +609,7 @@ class Pst
 				raise 'blah 3' if i == 0 and start_val != 0 and idx.id != start_val
 				idx.pst = self
 				# this shouldn't really happen i'd imagine
-				break if idx.id == 0
+				raise "OHNO" if idx.id == 0
 				@blocks << idx
 			end
 		else
@@ -599,7 +621,7 @@ class Pst
 				# for the first value, we expect the start to be equal
 				raise 'blah 3' if i == 0 and start_val != 0 and table.start != start_val
 				# this shouldn't really happen i'd imagine
-				break if table.start == 0
+				raise "OHNO" if table.start == 0
 				load_block_tree table.offset, table.u1, table.start
 			end
 		end
@@ -762,10 +784,60 @@ class Pst
 		load_sub_block_to node.sub_block_id, local_node_id, list
 	end
 
+	# @param node_id [String]
+	# @param list [Array<String>]
+	def get_local_node_list_to node_id, list
+		node = node_from_id node_id
+		get_local_node_list_of_sub_block_to node.sub_block_id, list
+	end
+
+	# @param sub_block_id [String]
+	# @param list [Array<String>]
+	def get_local_node_list_of_sub_block_to sub_block_id, list
+		return if sub_block_id == 0
+
+		sub_block = block_from_id sub_block_id
+		p ["WALK",sub_block_id,sub_block]
+		raise 'must not be data' if sub_block.data?
+
+		# SLBLOCK or SIBLOCK
+		data = sub_block.read
+
+		btype = data[0].ord
+		raise 'btype != 2' if btype != 2
+
+		level = data[1].ord
+		case level
+		when 0 # SLBLOCK
+			count = data[2, 2].unpack("v").first
+			count.times do |i|
+				sl_node_id, sl_block_id, sl_sub_block_id = (
+					is64 ? Pst.unpack(data[(is64 ? 8 : 4) + 24 * i, 24], "T3") : data[(is64 ? 8 : 4) + 12 * i, 12].unpack("V3")
+				)
+
+				list << (sl_node_id & 0xffffffff)
+				
+				get_local_node_list_of_sub_block_to sl_sub_block_id, list
+			end
+		when 1 # SIBLOCK
+			count = data[2, 2].unpack("v").first
+			count.times do |i|
+				si_node_id, si_block_id = (
+					is64 ? Pst.unpack(data[(is64 ? 8 : 4) + 16 * i, 16], "T2") : data[(is64 ? 8 : 4) + 8 * i, 8].unpack("V2")
+				)
+
+				list << (si_node_id & 0xffffffff)
+			end
+		else
+			raise 'level unk'
+		end
+	end
+
 	# @param sub_block_id [Integer]
 	# @param local_node_id [Integer]
 	# @param list [Array<String>]
 	def load_sub_block_to sub_block_id, local_node_id, list
+		raise 'sub_block_id must be Integer' unless Integer === sub_block_id
 		return if sub_block_id == 0
 
 		sub_block = block_from_id sub_block_id
@@ -782,9 +854,11 @@ class Pst
 		when 0 # SLBLOCK
 			count = data[2, 2].unpack("v").first
 			count.times do |i|
-				sl_node_id, dummy, sl_block_id, sl_sub_block_id = (
-					is64 ? Pst.unpack(data[8 + 24 * i, 24], "VVT2") : data[8 + 12 * i, 12].unpack("V3")
+				sl_node_id, sl_block_id, sl_sub_block_id = (
+					is64 ? Pst.unpack(data[(is64 ? 8 : 4) + 24 * i, 24], "T3") : data[(is64 ? 8 : 4) + 12 * i, 12].unpack("V3")
 				)
+
+				sl_node_id &= 0xffffffff
 				
 				if sl_node_id == local_node_id
 					load_main_block_to sl_block_id, list
@@ -795,9 +869,11 @@ class Pst
 		when 1 # SIBLOCK
 			count = data[2, 2].unpack("v").first
 			count.times do |i|
-				si_node_id, dummy, si_block_id = (
-					is64 ? Pst.unpack(data[8 + 16 * i, 16], "VVT") : data[8 + 8 * i, 8].unpack("V2")
+				si_node_id, si_block_id = (
+					is64 ? Pst.unpack(data[(is64 ? 8 : 4) + 16 * i, 16], "T2") : data[(is64 ? 8 : 4) + 8 * i, 8].unpack("V2")
 				)
+
+				si_node_id &= 0xffffffff
 
 				if si_node_id == local_node_id
 					si_block = block_from_id si_block_id
@@ -929,6 +1005,7 @@ class Pst
 	# @param block [BlockPtr]
 	# @return [ID2Mapping]
 	def load_sub_block block
+		raise "NO SIR"
 		if header.version_2003?
 			id2 = SLBlock64.load_chain block
 		else
@@ -943,6 +1020,7 @@ class Pst
 	# @param block [BlockPtr]
 	# @return [Array]
 	def load_sub_block_rec block
+		raise "NO SIR"
 		# i should perhaps use a idx chain style read here?
 		buf = pst_read_block_size block.offset, block.size, false
 		type, count = buf.unpack 'v2'
@@ -990,6 +1068,7 @@ class Pst
 	# @param idx [BlockPtr]
 	# @return [Array]
 	def id2_block_idx_chain idx
+		raise "NO SIR"
 		#p idx
 		if (idx.id & 0x2) == 0
 			[idx]
