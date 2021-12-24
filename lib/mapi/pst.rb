@@ -782,8 +782,8 @@ class Pst
 		when 0 # SLBLOCK
 			count = data[2, 2].unpack("v").first
 			count.times do |i|
-				sl_node_id, sl_block_id, sl_sub_block_id = (
-					is64 ? Pst.unpack(data[8 + 24 * i, 24], "T3") : data[8 + 12 * i, 12].unpack("V3")
+				sl_node_id, dummy, sl_block_id, sl_sub_block_id = (
+					is64 ? Pst.unpack(data[8 + 24 * i, 24], "VVT2") : data[8 + 12 * i, 12].unpack("V3")
 				)
 				
 				if sl_node_id == local_node_id
@@ -795,8 +795,8 @@ class Pst
 		when 1 # SIBLOCK
 			count = data[2, 2].unpack("v").first
 			count.times do |i|
-				si_node_id, si_block_id = (
-					is64 ? Pst.unpack(data[8 + 16 * i, 16], "T2") : data[8 + 8 * i, 8].unpack("V2")
+				si_node_id, dummy, si_block_id = (
+					is64 ? Pst.unpack(data[8 + 16 * i, 16], "VVT") : data[8 + 8 * i, 8].unpack("V2")
 				)
 
 				if si_node_id == local_node_id
@@ -1618,13 +1618,13 @@ only remaining issue is test4 recipients of 200044. strange.
 			return [] if !table
 			table.map do |attachment|
 				attachment = attachment.to_a
-				#p attachment
+				p attachment
 				# potentially merge with yet more properties
 				# this still seems pretty broken - especially the property overlap
 				if attachment_id2 = attachment.assoc(PR_ATTACHMENT_ID2)
 					#p attachment_id2.last
 					#p idx2[attachment_id2.last]
-					#p ["PR_ATTACHMENT_ID2 hit",node.node_id,attachment_id2]
+					p ["attachment hit",node.node_id,attachment_id2]
 
 					# verify existence of record
 					if @node.has_sub attachment_id2.last
@@ -1637,6 +1637,7 @@ only remaining issue is test4 recipients of 200044. strange.
 						# record is missing, it means there is no attachment data in pst! not recoverable.
 						# maybe Outlook failed to access the source file when the file is going to be attached.
 						# e.g. trying to attach a file having invalid file name like `"trailing-space.txt       "`
+						p "NO"
 					end
 				end
 				attachment
