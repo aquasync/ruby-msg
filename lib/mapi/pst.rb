@@ -310,6 +310,12 @@ class Pst
 		load_node_btree
 		load_xattrib
 
+		#nodes.each {|node|
+		#	open "H:/Proj/WalkPst/bin/Debug/net6.0/r/#{node.node_id}.main.bin", "wb" do |f|
+		#		f.write node.read_main
+		#	end
+		#}
+
 		@special_folder_ids = {}
 	end
 
@@ -491,12 +497,37 @@ class Pst
 
 		# @return [BlockPtr]
 		def block
+			raise "DO NOT USE"
 			pst.block_from_id block_id
 		end
 
 		# @return [BlockPtr]
 		def sub_block
+			raise "DO NOT USE"
 			pst.block_from_id sub_block_id
+		end
+
+		# Read node data
+		#
+		# @return [String]
+		def read_main
+			@read_main ||= begin
+				temp = StringIO.new(''.force_encoding("BINARY"))
+				pst.load_node_main_data_to node_id, temp
+				temp.string
+			end
+		end
+
+		# Locate and read node sub data by its local id
+		#
+		# @param local_node_id [Integer]
+		# @return [String]
+		def read_sub local_node_id
+			@read_sub ||= begin
+				temp = StringIO.new(''.force_encoding("BINARY"))
+				pst.load_node_sub_data_to node_id, local_node_id, temp
+				temp.string
+			end
 		end
 
 		# show all numbers in hex
@@ -575,7 +606,7 @@ class Pst
 	# @param id [Integer]
 	# @return [BlockPtr]
 	def block_from_id id
-		@block_from_id[id]
+		@block_from_id[id & ~1]
 	end
 
 	# corresponds to
@@ -687,18 +718,6 @@ class Pst
 	# corresponds to
 	# * pst_load_extended_attributes
 	def load_xattrib
-		unless node = node_from_id(0x61)
-			warn "no extended attributes desc record found"
-			return
-		end
-		unless node.block
-			warn "no desc idx for extended attributes"
-			return
-		end
-		if node.sub_block
-		end
-		#warn "skipping loading xattribs"
-		# FIXME implement loading xattribs
 	end
 
 	# corresponds to:
@@ -716,6 +735,107 @@ class Pst
 		buf = io.read size
 		warn "tried to read #{size} bytes but only got #{buf.length}" if buf.length != size
 		encrypted? && decrypt ? CompressibleEncryption.decrypt(buf) : buf
+	end
+
+	# @param node_id [Integer]
+	# @param io [IO]
+	def load_node_main_data_to node_id, io
+		raise 'node_is must be Integer' unless Integer === node_id
+		node = node_from_id node_id
+		load_main_block_to node.block_id, io
+	end
+
+	# @param node_id [Integer]
+	# @param local_node_id [Integer]
+	# @param io [IO]
+	def load_node_sub_data_to node_id, local_node_id, io
+		raise 'node_is must be Integer' unless Integer === node_id
+		raise 'local_node_id must be Integer' unless Integer === local_node_id
+		node = node_from_id node_id
+		load_sub_block_to node.sub_block_id, local_node_id, io
+	end
+
+	# @param sub_block_id [Integer]
+	# @param local_node_id [Integer]
+	# @param io [IO]
+	def load_sub_block_to sub_block_id, local_node_id, io
+		return if sub_block_id == 0
+
+		sub_block = block_from_id sub_block_id
+		raise 'must not be data' if sub_block.data?
+
+		# SLBLOCK or SIBLOCK
+		data = sub_block.read
+
+		btype = data[0].ord
+		raise 'btype != 2' if btype != 2
+
+		level = data[1].ord
+		case level
+		when 0 # SLBLOCK
+			count = data[2, 2].unpack("v").first
+			count.times do |i|
+				sl_node_id, sl_block_id, sl_sub_block_id = (
+					is64 ? Pst.unpack(data[8 + 24 * i, 24], "T3") : data[8 + 12 * i, 12].unpack("V3")
+				)
+				
+				if sl_node_id == local_node_id
+					load_main_block_to sl_block_id, io
+				end
+
+				load_sub_block_to sl_sub_block_id, local_node_id, io
+			end
+		when 1 # SIBLOCK
+			count = data[2, 2].unpack("v").first
+			count.times do |i|
+				si_node_id, si_block_id = (
+					is64 ? Pst.unpack(data[8 + 16 * i, 16], "T2") : data[8 + 8 * i, 8].unpack("V2")
+				)
+
+				if si_node_id == local_node_id
+					si_block = block_from_id si_block_id
+					raise 'must be data' unless si_block.data?
+					io.write si_block.read
+				end
+			end
+		else
+			raise 'level unk'
+		end
+	end
+
+	# @param block_id [Integer]
+	# @param io [IO]
+	def load_main_block_to block_id, io
+		return if block_id == 0
+
+		block = block_from_id block_id
+
+		if block.data?
+			# this is real data we want
+			io.write block.read
+			return
+		end
+
+		# XBLOCK or XXBLOCK
+		data = block.read
+
+		btype = data[0].ord
+		raise 'btype must be 1' if btype != 1
+
+		level = data[1].ord
+		case level
+		when 1, 2
+			count, num_bytes = data[2, 6].unpack("vV")
+
+			list = (
+				is64 ? Pst.unpack(data[8, 8 * count], "T#{count}") : data[8, 4 * count].unpack("V#{count}")
+			)
+			list.each { |block_id|
+				load_main_block_to block_id, io
+			}
+		else
+			raise 'level unk'
+		end
 	end
 
 	#
@@ -902,8 +1022,8 @@ class Pst
 		include Mapi::Types::Constants
 
 		TYPES = {
-			0xbcec => 1,
-			0x7cec => 2,
+			0xbc => 1,
+			0x7c => 2,
 			# type 3 is removed. an artifact of not handling the indirect blocks properly in libpst.
 		}
 
@@ -944,53 +1064,20 @@ class Pst
 
 		# @return [NodePtr]
 		attr_reader :node
+		# @return [String]
 		attr_reader :data
+		# @return [Array]
 		attr_reader :data_chunks
+		# @return [Array]
 		attr_reader :offset_tables
 
 		# @param node [NodePtr]
 		def initialize node
-			raise FormatError, "unable to get associated index record for #{node.inspect}" unless node.block
+			#raise FormatError, "unable to get associated index record for #{node.inspect}" unless node.block
 			@node = node
-			#@data = desc.desc.read
-			#TODO: BAD
-			p node.block
-			if Pst::BlockPtr === node.block
-				#@data = RangesIOIdxChain.new(desc.pst, desc.desc).read
-				idxs = node.pst.id2_block_idx_chain node.block
-				# this gets me the plain index chain.
-			else
-				# fake desc
-				#@data = desc.desc.read
-				idxs = [node.block]
-			end
-
-			@data_chunks = idxs.map { |idx| idx.read }
-			@data = @data_chunks.first
+			@data = node.read_main
 
 			load_header
-
-			@index_offsets = [@index_offset] + @data_chunks[1..-1].map { |chunk| chunk.unpack('v')[0] }
-			@offset_tables = []
-			@ignored = []
-			@data_chunks.zip(@index_offsets).each do |chunk, offset|
-				ignore = chunk[offset, 2].unpack('v')[0]
-				@ignored << ignore
-#				p ignore
-				@offset_tables.push offset_table = []
-				# maybe its ok if there aren't to be any values ?
-				raise FormatError if offset == 0
-				offsets = chunk[offset + 2..-1].unpack('v*')
-				#p offsets
-				offsets[0, ignore + 2].each_cons 2 do |from, to|
-					#next if to == 0
-					raise FormatError, [from, to].inspect if from > to
-					offset_table << [from, to]
-				end
-			end
-
-			@offset_table = @offset_tables.first
-			@idxs = idxs
 
 			# now, we may have multiple different blocks
 		end
@@ -998,16 +1085,30 @@ class Pst
 		# a given desc record may or may not have associated idx2 data. we lazily load it here, so it will never
 		# actually be requested unless get_data_indirect actually needs to use it.
 		def sub_block
+			raise "NO NO"
 			return @sub_block if @sub_block
 			raise FormatError, 'idx2 requested but no idx2 available' unless node.sub_block
 			# should check this can't return nil
 			@sub_block = node.pst.load_sub_block node.sub_block
 		end
 
+		# Parse HNHDR
+		#
+		# @see https://docs.microsoft.com/en-us/openspecs/office_file_formats/ms-pst/8e4ae05c-3c24-4103-b7e5-ffef6f244834
 		def load_header
-			@index_offset, type, @offset1 = data.unpack 'vvV'
-			raise FormatError, 'unknown block type signature 0x%04x' % type unless TYPES[type]
-			@type = TYPES[type]
+			page_map, sig, @heap_type, @offset1 = data.unpack 'vCCVV'
+			raise FormatError, 'invalid signature 0x%02x' % sig unless sig == 0xec
+			raise FormatError, 'unknown block type signature 0x%02x' % @heap_type unless TYPES[@heap_type]
+			@type = TYPES[@heap_type]
+
+			count = data[page_map, 2].unpack("v").first + 1
+			@offset_tables = data[page_map + 4, 2 * count].unpack("v#{count}")
+
+			@data_chunks = []
+			@offset_tables.each_cons 2 do |from, to|
+				@data_chunks.push data[from, to - from]
+			end
+			#@data_chunks.push "" # appending empty one
 		end
 
 		# based on the value of offset, return either some data from buf, or some data from the
@@ -1017,52 +1118,32 @@ class Pst
 		# corresponds to:
 		# * _pst_getBlockOffsetPointer
 		# * _pst_getBlockOffset
+		# 
+		# @param offset [Integer]
+		# @return [String]
 		def get_data_indirect offset
-			return get_data_indirect_io(offset).read
+			raise "offset must be Integer" unless Integer === offset
 
-			if offset == 0
-				nil
-			elsif (offset & 0xf) == 0xf
-				RangesIOID2.new(node.pst, offset, sub_block).read
-			else
-				low, high = offset & 0xf, offset >> 4
-				raise FormatError if low != 0 or (high & 0x1) != 0 or (high / 2) > @offset_table.length
-				from, to = @offset_table[high / 2]
-				data[from...to]
-			end
+			return get_data_indirect_io(offset).read
 		end
 
+		# Resolve data pointed by HNID
+		#
+		# @see https://docs.microsoft.com/en-us/openspecs/office_file_formats/ms-pst/7ac490ce-31af-4a75-97df-eb9d07a003fd
+		# @param offset [Integer]
+		# @return [StringIO]
 		def get_data_indirect_io offset
+			raise "offset must be Integer" unless Integer === offset
+
 			if offset == 0
 				nil
-			elsif (offset & 0xf) == 0xf
-				if sub_block[offset]
-					RangesIOID2.new node.pst, offset, sub_block
-				else
-					warn "tried to get idx2 record for #{offset} but failed"
-					return StringIO.new('')
-				end
+			elsif (offset & 0x1f) != 0
+				# this is NID (node)
+				StringIO.new node.read_sub offset
 			else
-				low, high = offset & 0xf, offset >> 4
-				if low != 0 or (high & 0x1) != 0
-#				raise FormatError, 
-					warn "bad - #{low} #{high} (1)" 
-					return StringIO.new('')
-				end
-				# lets see which block it should come from.
-				block_idx, i = high.divmod 4096
-				unless block_idx < @data_chunks.length
-					warn "bad - block_idx to high (not #{block_idx} < #{@data_chunks.length})"
-					return StringIO.new('')
-				end
-				data_chunk, offset_table = @data_chunks[block_idx], @offset_tables[block_idx]
-				if i / 2 >= offset_table.length
-					warn "bad - #{low} #{high} - #{i / 2} >= #{offset_table.length} (2)"
-					return StringIO.new('')
-				end
-				#warn "ok  - #{low} #{high} #{offset_table.length}"
-				from, to = offset_table[i / 2]
-				StringIO.new data_chunk[from...to]
+				# this is HID (heap)
+				i = ((offset / 0x20) & 0x7ff) - 1
+				StringIO.new data_chunks[i]
 			end
 		end
 
@@ -1240,10 +1321,14 @@ only remaining issue is test4 recipients of 200044. strange.
 
 		attr_reader :length
 
+		# Will read Property Context (PC)
+		#
+		# @see https://docs.microsoft.com/en-us/openspecs/office_file_formats/ms-pst/294c83c6-ff92-42f5-b6b6-876c29fa9737
 		# @param desc [NodePtr]
 		def initialize node
 			super
-			raise FormatError, "expected type 1 - got #{@type}" unless @type == 1
+			bTypePC = 0xbc
+			raise FormatError, "expected type 0xbc - got #{@heap_type}" unless @heap_type == bTypePC
 
 			# the way that offset works, data1 may be a subset of buf, or something from id2. if its from buf,
 			# it will be offset based on index_offset and offset. so it could be some random chunk of data anywhere
@@ -1251,8 +1336,7 @@ only remaining issue is test4 recipients of 200044. strange.
 			header_data = get_data_indirect @offset1
 			raise FormatError if header_data.length < 8
 			signature, offset2 = header_data.unpack 'V2'
-			#p [@type, signature]
-			raise FormatError, 'unhandled block signature 0x%08x' % @type if signature != 0x000602b5
+			raise FormatError, 'invalid Property Context signature 0x%08x' % @type if signature != 0x000602b5
 			# this is actually a big chunk of tag tuples.
 			@index_data = get_data_indirect offset2
 			@length = @index_data.length / 8
@@ -1656,6 +1740,7 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 	# @param desc [NodePtr]
 	# @return [Item]
 	def pst_parse_item node
+		printf "parsing node %u \n", node.node_id
 		Item.new node, RawPropertyStore.new(node).to_a
 	end
 
