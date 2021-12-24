@@ -1,0 +1,66 @@
+//------------------------------------------------
+//--- 010 Editor v11.0.1 Binary Template
+//
+//      File: HN (Heap-on-Node)
+//   Authors: kenjiuno
+//   Version: 
+//   Purpose: 
+//  Category: 
+// File Mask: 
+//  ID Bytes: 
+//   History: 
+//------------------------------------------------
+
+struct HID {
+uint hidType:5;
+uint hidIndex:11;
+uint hidBlockIndex:16;
+};
+
+struct HN {
+ushort ibHnpm ;
+uchar bSig;
+uchar bClientSig;
+HID hidUserRoot;
+uint rgbFillLevel;
+};
+
+HN hn;
+
+struct BTHHEADER{
+uchar bType;
+uchar cbKey;
+uchar cbEnt;
+uchar bIdxLevels;
+HID hidRoot;
+};
+
+struct PCBTHRecord {
+ushort wPropId;
+ushort wPropType;
+HID dwValueHnid;
+};
+
+if (hn.bClientSig == 0xbc) {
+ // bTypePC
+ BTHHEADER bth;
+
+ if (bth.bType == 181) {
+  // bTypeBTH
+  PCBTHRecord record[13];
+ }
+}
+
+FSeek(hn.ibHnpm);
+ushort cAlloc;
+ushort cFree;
+ushort rgibAlloc [cAlloc+1];
+
+AddBookmark(FTell()-1, "EOF", "byte", 1, cNone, 0x888800);
+
+local int x;
+local string hint;
+for (x=0;x<cAlloc;x++) {
+ SPrintf(hint, "chunk#%d", 1+x);
+ AddBookmark(rgibAlloc[x], hint, "byte", 1, cNone, 0x888800);
+}
