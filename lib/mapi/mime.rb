@@ -130,11 +130,14 @@ module Mapi
   			attrs['boundary'] = boundary
   			@headers['Content-Type'] = [([content_type] + attrs.map { |key, val| %{#{key}="#{val}"} }).join('; ')]
 		else
-			content_type, attrs = Mime.split_header @headers['Content-Type'][0]
-			case content_type.split("/").first()
-			when "text"
-				attrs["charset"] = @body.encoding.name
-				@headers['Content-Type'] = [([content_type] + attrs.map { |key, val| %{#{key}="#{val}"} }).join('; ')]
+			raw_content_type = @headers['Content-Type'][0]
+			if raw_content_type
+				content_type, attrs = Mime.split_header raw_content_type
+				case content_type.split("/").first()
+				when "text"
+					attrs["charset"] = @body.encoding.name
+					@headers['Content-Type'] = [([content_type] + attrs.map { |key, val| %{#{key}="#{val}"} }).join('; ')]
+				end
 			end
   		end
 

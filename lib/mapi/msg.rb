@@ -1,6 +1,7 @@
 require 'ole/storage'
 require 'mapi'
 require 'mapi/rtf'
+require 'mapi/helper'
 
 module Mapi
 	#

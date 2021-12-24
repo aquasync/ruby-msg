@@ -33,7 +33,7 @@ Content-Type: multipart/alternative; boundary="----_=_NextPart_XXX"
 This is a multi-part message in MIME format.
 
 ------_=_NextPart_XXX
-Content-Type: text/plain
+Content-Type: text/plain; charset=\"UTF-8\"
 
 
 I will be out of the office starting  15.02.2007 and will not return until
@@ -45,7 +45,7 @@ contact Motherine Jacson.
 
 
 ------_=_NextPart_XXX
-Content-Type: text/html
+Content-Type: text/html; charset=\"UTF-8\"
 
 <html>
 <body>

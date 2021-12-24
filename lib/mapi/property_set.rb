@@ -189,7 +189,7 @@ module Mapi
 		#
 		# @return [Hash{Symbol => Key}]
 		def sym_to_key
-			return @sym_to_key if @sym_to_key
+			return @sym_to_key if defined? @sym_to_key
 			@sym_to_key = {}
 			raw.keys.each do |key|
 				sym = key.to_sym
@@ -251,7 +251,7 @@ module Mapi
 		end
 
 		def decode_ansi_str str
-			if raw.helper
+			if defined? raw.helper
 				raw.helper.convert_ansi_str(str)
 			else
 				str
@@ -285,7 +285,7 @@ module Mapi
 			if self[:rtf_compressed]
 				begin
 					@body_rtf = decode_ansi_str(RTF.rtfdecompr self[:rtf_compressed].read)
-				rescue
+				rescue => e
 					Log.warn 'unable to decompress rtf'
 				end
 			end
