@@ -523,11 +523,18 @@ class Pst
 		# @param local_node_id [Integer]
 		# @return [String]
 		def read_sub local_node_id
-			@read_sub ||= begin
-				temp = StringIO.new(''.force_encoding("BINARY"))
-				pst.load_node_sub_data_to node_id, local_node_id, temp
-				temp.string
-			end
+			temp = StringIO.new(''.force_encoding("BINARY"))
+			pst.load_node_sub_data_to node_id, local_node_id, temp
+			temp.string
+		end
+
+		# Check if there is a sub data exists, where it is identified by its local id
+		#
+		# @param local_node_id [Integer]
+		# @return [Boolean]
+		def has_sub local_node_id
+			#TODO fixme
+			read_sub(local_node_id).length != 0
 		end
 
 		# show all numbers in hex
@@ -1062,6 +1069,8 @@ class Pst
 		ID2_ATTACHMENTS = 0x671
 		ID2_RECIPIENTS = 0x692
 
+		USE_MAIN_DATA = -1
+
 		# @return [NodePtr]
 		attr_reader :node
 		# @return [String]
@@ -1072,11 +1081,13 @@ class Pst
 		attr_reader :offset_tables
 
 		# @param node [NodePtr]
-		def initialize node
+		# @param local_node_id [Integer]
+		def initialize node, local_node_id = USE_MAIN_DATA
 			#raise FormatError, "unable to get associated index record for #{node.inspect}" unless node.block
 			@node = node
-			@data = node.read_main
+			@data = (local_node_id == USE_MAIN_DATA) ? node.read_main : (node.read_sub local_node_id)
 
+			p ["BPn",node.node_id,local_node_id,@data.length]
 			load_header
 
 			# now, we may have multiple different blocks
@@ -1101,8 +1112,8 @@ class Pst
 			raise FormatError, 'unknown block type signature 0x%02x' % @heap_type unless TYPES[@heap_type]
 			@type = TYPES[@heap_type]
 
-			count = data[page_map, 2].unpack("v").first + 1
-			@offset_tables = data[page_map + 4, 2 * count].unpack("v#{count}")
+			offsets_count = data[page_map, 2].unpack("v").first + 1
+			@offset_tables = data[page_map + 4, 2 * offsets_count].unpack("v#{offsets_count}")
 
 			@data_chunks = []
 			@offset_tables.each_cons 2 do |from, to|
@@ -1221,10 +1232,10 @@ looks like it
 				if type == PT_OBJECT and value
 					value = value.read if value.respond_to?(:read)
 					id2, unknown = value.unpack 'V2'
-					io = RangesIOID2.new node.pst, id2, sub_block
+					io = get_data_indirect_io id2
 
 					# hacky
-					desc2 = OpenStruct.new(:node => io, :pst => node.pst, :sub_block => node.sub_block, :children => [])
+					#desc2 = OpenStruct.new(:node => io, :pst => node.pst, :sub_block => node.sub_block, :children => [])
 					# put nil instead of desc.list_index, otherwise the attachment is attached to itself ad infinitum.
 					# should try and fix that FIXME
 					# this shouldn't be done always. for an attached message, yes, but for an attached
@@ -1325,10 +1336,11 @@ only remaining issue is test4 recipients of 200044. strange.
 		#
 		# @see https://docs.microsoft.com/en-us/openspecs/office_file_formats/ms-pst/294c83c6-ff92-42f5-b6b6-876c29fa9737
 		# @param desc [NodePtr]
-		def initialize node
+		# @param local_node_id [Integer]
+		def initialize node, local_node_id = USE_MAIN_DATA
 			super
 			bTypePC = 0xbc
-			raise FormatError, "expected type 0xbc - got #{@heap_type}" unless @heap_type == bTypePC
+			raise FormatError, "expected type 188 - got #{@heap_type}" unless @heap_type == bTypePC
 
 			# the way that offset works, data1 may be a subset of buf, or something from id2. if its from buf,
 			# it will be offset based on index_offset and offset. so it could be some random chunk of data anywhere
@@ -1359,6 +1371,7 @@ only remaining issue is test4 recipients of 200044. strange.
 	# only used for the recipients array, and the attachments array. completely lazy, doesn't
 	# load any of the properties upon creation. 
 	class RawPropertyStoreTable < BlockParser
+		# TCOLDESC
 		class Column < Struct.new(:ref_type, :type, :ind2_off, :size, :slot)
 			def initialize data
 				super(*data.unpack('v3CC'))
@@ -1379,16 +1392,28 @@ only remaining issue is test4 recipients of 200044. strange.
 
 		include Enumerable
 
-		attr_reader :length, :index_data, :data2, :data3, :rec_size
-		def initialize node
+		attr_reader :length
+		# @return [String] Array of TCOLDESC
+		attr_reader :index_data
+		# @return [String] 2.3.2 BTree-on-Heap (BTH)
+		attr_reader :data2
+		# @return [String] 2.3.4.4 Row Matrix
+		attr_reader :rows_data
+		# @return [Integer] TCI_bm
+		attr_reader :rec_size
+
+		def initialize node, local_node_id
+			p ["RPST",node.node_id,local_node_id]
 			super
-			raise FormatError, "expected type 2 - got #{@type}" unless @type == 2
+			bTypeTC = 0x7c
+			raise FormatError, "expected type 124 - got #{@heap_type}" unless @heap_type == bTypeTC
 
 			header_data = get_data_indirect @offset1
 			# seven_c_blk
 			# often: u1 == u2 and u3 == u2 + 2, then rec_size == u3 + 4. wtf
+			# TCINFO
 			seven_c, @num_list, u1, u2, u3, @rec_size, b_five_offset,
-				ind2_offset, u7, u8 = header_data[0, 22].unpack('CCv4V2v2')
+				rows_offset, u7, u8 = header_data[0, 22].unpack('CCv4V2v2')
 			@index_data = header_data[22..-1]
 
 			raise FormatError if @num_list != schema.length or seven_c != 0x7c
@@ -1412,14 +1437,19 @@ only remaining issue is test4 recipients of 200044. strange.
 
 			# this holds all the row data
 			# handle multiple block issue.
-			@data3_io = get_data_indirect_io ind2_offset
-			if RangesIOIdxChain === @data3_io
-				@data3_idxs = 
-				# modify ranges
-				ranges = @data3_io.ranges.map { |offset, size| [offset, size / @rec_size * @rec_size] }
-				@data3_io.instance_variable_set :@ranges, ranges
+			if rows_offset != 0
+				@rows_io = get_data_indirect_io rows_offset
+				#if RangesIOIdxChain === @rows_io
+				#	@data3_idxs = 
+				#	# modify ranges
+				#	ranges = @rows_io.ranges.map { |offset, size| [offset, size / @rec_size * @rec_size] }
+				#	@rows_io.instance_variable_set :@ranges, ranges
+				#end
+				@rows_data = @rows_io.read
+			else
+				# table rows are empty, no data to be read
+				@rows_data = ""
 			end
-			@data3 = @data3_io.read
 
 			# there must be something to the data in data2. i think data2 is the array of objects essentially.
 			# currently its only used to imply a length
@@ -1437,7 +1467,7 @@ only remaining issue is test4 recipients of 200044. strange.
 			# the above / 6, may have been ok for 97 files, but the new 0x0004 style block must have
 			# different size records... just use this instead:
 				# hmmm, actually, we can still figure it out:
-				@length = @data3.length / @rec_size
+				@length = @rows_data.length / @rec_size
 			#end
 
 			# lets try and at least use data2 for a warning for now
@@ -1451,11 +1481,15 @@ only remaining issue is test4 recipients of 200044. strange.
 			@schema ||= index_data.scan(/.{8}/m).map { |data| Column.new data }
 		end
 
+		# @param idx [Integer]
+		# @return [Row]
 		def [] idx
 			# handle funky rounding
 			Row.new self, idx * @rec_size
 		end
 
+		# @yield [it]
+		# @yieldparam [Row] it
 		def each
 			length.times { |i| yield self[i] }
 		end
@@ -1463,16 +1497,24 @@ only remaining issue is test4 recipients of 200044. strange.
 		class Row
 			include Enumerable
 
+			# @param array_parser [RawPropertyStoreTable]
+			# @param x [Integer]
 			def initialize array_parser, x
-				@array_parser, @x = array_parser, x
+				@array_parser = array_parser
+				@x = x
 			end
 
 			# iterate through the property tuples
+			#
+			# @yield [key, type, value]
+			# @yieldparam [Integer] key
+			# @yieldparam [Integer] type
+			# @yieldparam [Object] value
 			def each
 				(@array_parser.index_data.length / 8).times do |i|
 					ref_type, type, ind2_off, size, slot = @array_parser.index_data[8 * i, 8].unpack 'v3CC'
 					# check this rescue too
-					value = @array_parser.data3[@x + ind2_off, size]
+					value = @array_parser.rows_data[@x + ind2_off, size]
 #					if INDIRECT_TYPES.include? ref_type
 					if size <= 4
 						value = value.unpack('V')[0]
@@ -1491,16 +1533,24 @@ only remaining issue is test4 recipients of 200044. strange.
 		# this value, it is the id2 value to use to get attachment data.
 		PR_ATTACHMENT_ID2 = 0x67f2
 
-		attr_reader :node, :table
+		# @return [NodePtr]
+		attr_reader :node
+		# @return [Enumerable<RawPropertyStoreTable::Row>]
+		attr_reader :table
+
 		def initialize node
 			@node = node
 			# no super, we only actually want BlockParser2#idx2
-			@table = nil
-			return unless node.sub_block
-			return unless block = sub_block[ID2_ATTACHMENTS]
-			# FIXME make a fake desc.
-			@fake_node = OpenStruct.new :block => block, :pst => node.pst, :sub_block => node.sub_block
-			@table = RawPropertyStoreTable.new @fake_node
+			#@table = nil
+			#return unless node.sub_block
+			#return unless block = sub_block[ID2_ATTACHMENTS]
+			## FIXME make a fake desc.
+			#@fake_node = OpenStruct.new :block => block, :pst => node.pst, :sub_block => node.sub_block
+			if @node.has_sub ID2_ATTACHMENTS
+				@table = RawPropertyStoreTable.new @node, ID2_ATTACHMENTS
+			else
+				@table = []
+			end
 		end
 
 		def to_a
@@ -1513,11 +1563,19 @@ only remaining issue is test4 recipients of 200044. strange.
 				if attachment_id2 = attachment.assoc(PR_ATTACHMENT_ID2)
 					#p attachment_id2.last
 					#p idx2[attachment_id2.last]
-					@fake_node.block = sub_block[attachment_id2.last]
-					RawPropertyStore.new(@fake_node).each do |a, b, c|
-						record = attachment.assoc a
-						attachment << record = [] unless record
-						record.replace [a, b, c]
+					#p ["PR_ATTACHMENT_ID2 hit",node.node_id,attachment_id2]
+
+					# verify existence of record
+					if @node.has_sub attachment_id2.last
+						RawPropertyStore.new(@node, attachment_id2.last).each do |a, b, c|
+							record = attachment.assoc a
+							attachment << record = [] unless record
+							record.replace [a, b, c]
+						end
+					else
+						# record is missing, it means there is no attachment data in pst! not recoverable.
+						# maybe Outlook failed to access the source file when the file is going to be attached.
+						# e.g. trying to attach a file having invalid file name like `"trailing-space.txt       "`
 					end
 				end
 				attachment
@@ -1532,12 +1590,17 @@ only remaining issue is test4 recipients of 200044. strange.
 		def initialize node
 			@node = node
 			# no super, we only actually want BlockParser2#idx2
-			@table = nil
-			return unless node.sub_block
-			return unless block = sub_block[ID2_RECIPIENTS]
-			# FIXME make a fake desc.
-			fake_node = OpenStruct.new :block => block, :pst => node.pst, :sub_block => node.sub_block
-			@table = RawPropertyStoreTable.new fake_node
+			#@table = nil
+			#return unless node.sub_block
+			#return unless block = sub_block[ID2_RECIPIENTS]
+			## FIXME make a fake desc.
+			#fake_node = OpenStruct.new :block => block, :pst => node.pst, :sub_block => node.sub_block
+			if @node.has_sub ID2_RECIPIENTS
+				@table = RawPropertyStoreTable.new @node, ID2_RECIPIENTS
+			else
+				@table = []
+			end
+
 		end
 
 		def to_a
