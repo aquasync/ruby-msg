@@ -509,23 +509,23 @@ class Pst
 
 		# Read node data
 		#
-		# @return [String]
-		def read_main
+		# @return [Array<String>]
+		def read_main_array
 			@read_main ||= begin
-				temp = StringIO.new(''.force_encoding("BINARY"))
-				pst.load_node_main_data_to node_id, temp
-				temp.string
+				list = []
+				pst.load_node_main_data_to node_id, list
+				list
 			end
 		end
 
 		# Locate and read node sub data by its local id
 		#
 		# @param local_node_id [Integer]
-		# @return [String]
-		def read_sub local_node_id
-			temp = StringIO.new(''.force_encoding("BINARY"))
-			pst.load_node_sub_data_to node_id, local_node_id, temp
-			temp.string
+		# @return [Array<String>]
+		def read_sub_array local_node_id
+			list = []
+			pst.load_node_sub_data_to node_id, local_node_id, list
+			list
 		end
 
 		# Check if there is a sub data exists, where it is identified by its local id
@@ -534,7 +534,7 @@ class Pst
 		# @return [Boolean]
 		def has_sub local_node_id
 			#TODO fixme
-			read_sub(local_node_id).length != 0
+			read_sub_array(local_node_id).length != 0
 		end
 
 		# show all numbers in hex
@@ -745,27 +745,27 @@ class Pst
 	end
 
 	# @param node_id [Integer]
-	# @param io [IO]
-	def load_node_main_data_to node_id, io
+	# @param list [Array<String>]
+	def load_node_main_data_to node_id, list
 		raise 'node_is must be Integer' unless Integer === node_id
 		node = node_from_id node_id
-		load_main_block_to node.block_id, io
+		load_main_block_to node.block_id, list
 	end
 
 	# @param node_id [Integer]
 	# @param local_node_id [Integer]
-	# @param io [IO]
-	def load_node_sub_data_to node_id, local_node_id, io
+	# @param list [Array<String>]
+	def load_node_sub_data_to node_id, local_node_id, list
 		raise 'node_is must be Integer' unless Integer === node_id
 		raise 'local_node_id must be Integer' unless Integer === local_node_id
 		node = node_from_id node_id
-		load_sub_block_to node.sub_block_id, local_node_id, io
+		load_sub_block_to node.sub_block_id, local_node_id, list
 	end
 
 	# @param sub_block_id [Integer]
 	# @param local_node_id [Integer]
-	# @param io [IO]
-	def load_sub_block_to sub_block_id, local_node_id, io
+	# @param list [Array<String>]
+	def load_sub_block_to sub_block_id, local_node_id, list
 		return if sub_block_id == 0
 
 		sub_block = block_from_id sub_block_id
@@ -787,10 +787,10 @@ class Pst
 				)
 				
 				if sl_node_id == local_node_id
-					load_main_block_to sl_block_id, io
+					load_main_block_to sl_block_id, list
 				end
 
-				load_sub_block_to sl_sub_block_id, local_node_id, io
+				load_sub_block_to sl_sub_block_id, local_node_id, list
 			end
 		when 1 # SIBLOCK
 			count = data[2, 2].unpack("v").first
@@ -802,7 +802,7 @@ class Pst
 				if si_node_id == local_node_id
 					si_block = block_from_id si_block_id
 					raise 'must be data' unless si_block.data?
-					io.write si_block.read
+					list << si_block.read.force_encoding("BINARY")
 				end
 			end
 		else
@@ -811,15 +811,15 @@ class Pst
 	end
 
 	# @param block_id [Integer]
-	# @param io [IO]
-	def load_main_block_to block_id, io
+	# @param list [Array<String>]
+	def load_main_block_to block_id, list
 		return if block_id == 0
 
 		block = block_from_id block_id
 
 		if block.data?
 			# this is real data we want
-			io.write block.read
+			list << block.read.force_encoding("BINARY")
 			return
 		end
 
@@ -834,11 +834,11 @@ class Pst
 		when 1, 2
 			count, num_bytes = data[2, 6].unpack("vV")
 
-			list = (
+			items = (
 				is64 ? Pst.unpack(data[8, 8 * count], "T#{count}") : data[8, 4 * count].unpack("V#{count}")
 			)
-			list.each { |block_id|
-				load_main_block_to block_id, io
+			items.each { |block_id|
+				load_main_block_to block_id, list
 			}
 		else
 			raise 'level unk'
@@ -1073,22 +1073,26 @@ class Pst
 
 		# @return [NodePtr]
 		attr_reader :node
-		# @return [String]
-		attr_reader :data
-		# @return [Array]
+		# @return [Hash<Integer, String>] HID to data block
 		attr_reader :data_chunks
-		# @return [Array]
-		attr_reader :offset_tables
 
 		# @param node [NodePtr]
 		# @param local_node_id [Integer]
 		def initialize node, local_node_id = USE_MAIN_DATA
 			#raise FormatError, "unable to get associated index record for #{node.inspect}" unless node.block
 			@node = node
-			@data = (local_node_id == USE_MAIN_DATA) ? node.read_main : (node.read_sub local_node_id)
+			@data_chunks = {}
 
-			p ["BPn",node.node_id,local_node_id,@data.length]
-			load_header
+			data_array = (local_node_id == USE_MAIN_DATA) ? node.read_main_array : (node.read_sub_array local_node_id)
+
+			data_array.each_with_index { |data, index|
+				# see https://docs.microsoft.com/en-us/openspecs/office_file_formats/ms-pst/a3fa280c-eba3-434f-86e4-b95141b3c7b1
+				if index == 0
+					load_root_header data
+				else
+					load_page_header data, index
+				end
+			}
 
 			# now, we may have multiple different blocks
 		end
@@ -1103,23 +1107,42 @@ class Pst
 			@sub_block = node.pst.load_sub_block node.sub_block
 		end
 
+		# Parse HNPAGEHDR / HNBITMAPHDR
+		#
+		# @see https://docs.microsoft.com/en-us/openspecs/office_file_formats/ms-pst/9c34ecf8-36bc-45a1-a2df-ee35c6dc840a
+		# 
+		# @param data [String]
+		# @param page_index [Integer]
+		def load_page_header data, page_index
+			page_map = data.unpack('v').first
+
+			# read HNPAGEMAP
+			offsets_count = data[page_map, 2].unpack("v").first + 1
+			offset_tables = data[page_map + 4, 2 * offsets_count].unpack("v#{offsets_count}")
+
+			offset_tables.each_cons(2).to_a.each_with_index do |(from, to), index|
+				# conver to HID
+				@data_chunks[0x20 * (1 + index) + 65536 * page_index] = data[from, to - from]
+			end
+		end
+
 		# Parse HNHDR
 		#
 		# @see https://docs.microsoft.com/en-us/openspecs/office_file_formats/ms-pst/8e4ae05c-3c24-4103-b7e5-ffef6f244834
-		def load_header
+		def load_root_header data
 			page_map, sig, @heap_type, @offset1 = data.unpack 'vCCVV'
 			raise FormatError, 'invalid signature 0x%02x' % sig unless sig == 0xec
 			raise FormatError, 'unknown block type signature 0x%02x' % @heap_type unless TYPES[@heap_type]
 			@type = TYPES[@heap_type]
 
+			# read HNPAGEMAP
 			offsets_count = data[page_map, 2].unpack("v").first + 1
-			@offset_tables = data[page_map + 4, 2 * offsets_count].unpack("v#{offsets_count}")
+			offset_tables = data[page_map + 4, 2 * offsets_count].unpack("v#{offsets_count}")
 
-			@data_chunks = []
-			@offset_tables.each_cons 2 do |from, to|
-				@data_chunks.push data[from, to - from]
+			offset_tables.each_cons(2).to_a.each_with_index do |(from, to), index|
+				# conver to HID
+				@data_chunks[0x20 * (1 + index)] = data[from, to - from]
 			end
-			#@data_chunks.push "" # appending empty one
 		end
 
 		# based on the value of offset, return either some data from buf, or some data from the
@@ -1150,11 +1173,32 @@ class Pst
 				nil
 			elsif (offset & 0x1f) != 0
 				# this is NID (node)
-				StringIO.new node.read_sub offset
+				data_array = node.read_sub_array(offset)
+				raise "local node id #{offset} points multi page count #{data_array.count}, use get_data_array() instead" if data_array.count >= 2
+				if data_array.empty?
+					StringIO.new ""
+				else
+					StringIO.new data_array.first
+				end
 			else
 				# this is HID (heap)
-				i = ((offset / 0x20) & 0x7ff) - 1
-				StringIO.new data_chunks[i]
+				StringIO.new data_chunks[offset]
+			end
+		end
+
+		# @param offset [Integer]
+		# @return [Array<String>]
+		def get_data_array offset
+			raise "offset must be Integer" unless Integer === offset
+
+			if offset == 0
+				nil
+			elsif (offset & 0x1f) != 0
+				# this is NID (node)
+				node.read_sub_array(offset)
+			else
+				# this is HID (heap)
+				[data_chunks[offset]]
 			end
 		end
 
@@ -1169,7 +1213,10 @@ class Pst
 				if String === value # ie, value size > 4 above
 					value = StringIO.new value
 				else
-					value = get_data_indirect_io(value)
+					value = get_data_array(value)
+					if value
+						value = StringIO.new value.join("")
+					end
 				end
 				# keep strings as immediate values for now, for compatability with how i set up
 				# Msg::Properties::ENCODINGS
@@ -1392,15 +1439,18 @@ only remaining issue is test4 recipients of 200044. strange.
 
 		include Enumerable
 
+		# @return [Integer] record count
 		attr_reader :length
 		# @return [String] Array of TCOLDESC
 		attr_reader :index_data
 		# @return [String] 2.3.2 BTree-on-Heap (BTH)
 		attr_reader :data2
-		# @return [String] 2.3.4.4 Row Matrix
-		attr_reader :rows_data
+		# @return [Array<String>] 2.3.4.4 Row Matrix
+		attr_reader :rows_pages
 		# @return [Integer] TCI_bm
 		attr_reader :rec_size
+		# @return [Integer] 
+		attr_reader :rows_per_page
 
 		def initialize node, local_node_id
 			p ["RPST",node.node_id,local_node_id]
@@ -1438,17 +1488,16 @@ only remaining issue is test4 recipients of 200044. strange.
 			# this holds all the row data
 			# handle multiple block issue.
 			if rows_offset != 0
-				@rows_io = get_data_indirect_io rows_offset
 				#if RangesIOIdxChain === @rows_io
 				#	@data3_idxs = 
 				#	# modify ranges
 				#	ranges = @rows_io.ranges.map { |offset, size| [offset, size / @rec_size * @rec_size] }
 				#	@rows_io.instance_variable_set :@ranges, ranges
 				#end
-				@rows_data = @rows_io.read
+				@rows_pages = get_data_array(rows_offset)
 			else
 				# table rows are empty, no data to be read
-				@rows_data = ""
+				@rows_pages = [""]
 			end
 
 			# there must be something to the data in data2. i think data2 is the array of objects essentially.
@@ -1467,14 +1516,17 @@ only remaining issue is test4 recipients of 200044. strange.
 			# the above / 6, may have been ok for 97 files, but the new 0x0004 style block must have
 			# different size records... just use this instead:
 				# hmmm, actually, we can still figure it out:
-				@length = @rows_data.length / @rec_size
+			@rows_per_page = @rows_pages.first.length / @rec_size
+
+			@length = @rows_pages.map { |data| data.length / @rec_size }.sum
+
 			#end
 
 			# lets try and at least use data2 for a warning for now
-			if data2
-				data2_rec_size = node.pst.header.version_2003? ? 8 : 6
-				warn 'somthing seems wrong with data3' unless @length == (data2.length / data2_rec_size)
-			end
+			#if data2
+			#	data2_rec_size = node.pst.header.version_2003? ? 8 : 6
+			#	warn 'somthing seems wrong with data3' unless @length == (data2.length / data2_rec_size)
+			#end
 		end
 
 		def schema
@@ -1485,7 +1537,7 @@ only remaining issue is test4 recipients of 200044. strange.
 		# @return [Row]
 		def [] idx
 			# handle funky rounding
-			Row.new self, idx * @rec_size
+			Row.new self, idx
 		end
 
 		# @yield [it]
@@ -1494,14 +1546,23 @@ only remaining issue is test4 recipients of 200044. strange.
 			length.times { |i| yield self[i] }
 		end
 
+		# @param record_index [Integer]
+		# @return [String]
+		def get_record record_index
+			page_index = record_index / @rows_per_page
+			heap_index = record_index % @rows_per_page
+			(@rows_pages[page_index])[@rec_size * heap_index, @rec_size]
+		end
+
 		class Row
 			include Enumerable
 
 			# @param array_parser [RawPropertyStoreTable]
-			# @param x [Integer]
-			def initialize array_parser, x
+			# @param index [Integer]
+			def initialize array_parser, index
 				@array_parser = array_parser
-				@x = x
+				@index = index
+				@data = @array_parser.get_record(index)
 			end
 
 			# iterate through the property tuples
@@ -1514,7 +1575,7 @@ only remaining issue is test4 recipients of 200044. strange.
 				(@array_parser.index_data.length / 8).times do |i|
 					ref_type, type, ind2_off, size, slot = @array_parser.index_data[8 * i, 8].unpack 'v3CC'
 					# check this rescue too
-					value = @array_parser.rows_data[@x + ind2_off, size]
+					value = @data[ind2_off, size]
 #					if INDIRECT_TYPES.include? ref_type
 					if size <= 4
 						value = value.unpack('V')[0]
