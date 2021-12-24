@@ -103,6 +103,17 @@ class Pst
 		a
 	end
 
+	# @param str [String]
+	# @param size [Integer]
+	# @param count [Integer]
+	# @return [Array<String>]
+	def self.split_per str, size, count
+		count = str.length / size if count < 0
+		list = []
+		count.times {|i| list << str[size * i, size]}
+		list
+	end
+
 	#
 	# this is the header and encryption encapsulation code
 	# ----------------------------------------------------------------------------
@@ -310,25 +321,25 @@ class Pst
 		load_node_btree
 		load_xattrib
 
-		blocks.each {|block|
-			p ["bid",block.id]
-		}
+		# blocks.each {|block|
+		# 	p ["bid",block.id]
+		# }
 
-		to_dir = "H:/Proj/WalkPst/bin/Debug/net6.0/r/"
-		nodes.each {|node|
-			node.read_main_array.each_with_index {|data,index|
-				open "#{to_dir}/#{node.node_id}.main.#{index}.bin", "wb" do |f|
-					f.write data
-				end
-			}
-			node.get_local_node_list().each {|sub|
-				node.read_sub_array(sub).each_with_index {|data,index|
-					open "#{to_dir}/#{node.node_id}.sub.#{sub}.#{index}.bin", "wb" do |f|
-						f.write data
-					end
-				}
-			}
-		}
+		# to_dir = "H:/Proj/WalkPst/bin/Debug/net6.0/r/"
+		# nodes.each {|node|
+		# 	node.read_main_array.each_with_index {|data,index|
+		# 		open "#{to_dir}/#{node.node_id}.main.#{index}.bin", "wb" do |f|
+		# 			f.write data
+		# 		end
+		# 	}
+		# 	node.get_local_node_list().each {|sub|
+		# 		node.read_sub_array(sub).each_with_index {|data,index|
+		# 			open "#{to_dir}/#{node.node_id}.sub.#{sub}.#{index}.bin", "wb" do |f|
+		# 				f.write data
+		# 			end
+		# 		}
+		# 	}
+		# }
 
 		@special_folder_ids = {}
 	end
@@ -603,7 +614,7 @@ class Pst
 			size = is64 ? BlockPtr::SIZE64 : BlockPtr::SIZE32
 
 			# split the data into item_count index objects
-			buf[0, size * item_count].scan(/.{#{size}}/mo).each_with_index do |data, i|
+			Pst.split_per(buf, size, item_count).each_with_index do |data, i|
 				idx = BlockPtr.new data, is64
 				# first entry
 				raise 'blah 3' if i == 0 and start_val != 0 and idx.id != start_val
@@ -616,7 +627,7 @@ class Pst
 			# node pointers
 			size = is64 ? TablePtr::SIZE64 : TablePtr::SIZE32
 			# split the data into item_count table pointers
-			buf[0, size * item_count].scan(/.{#{size}}/mo).each_with_index do |data, i|
+			Pst.split_per(buf, size, item_count).each_with_index do |data, i|
 				table = TablePtr.new data, is64
 				# for the first value, we expect the start to be equal
 				raise 'blah 3' if i == 0 and start_val != 0 and table.start != start_val
@@ -679,7 +690,7 @@ class Pst
 
 	# @return [Boolean]
 	def is64
-		header.version_2003?
+		@header.version_2003?
 	end
 
 	# load the flat list of desc records recursively
@@ -705,7 +716,7 @@ class Pst
 
 			raise "have too many active items in index (#{item_count})" if item_count > count_max
 			# split the data into item_count desc objects
-			buf[0, size * item_count].scan(/.{#{size}}/mo).each_with_index do |data, i|
+			Pst.split_per(buf, size, item_count).each_with_index do |data, i|
 				node = NodePtr.new data, is64
 				# first entry
 				raise 'blah 3' if i == 0 and start_val != 0 and node.node_id != start_val
@@ -720,7 +731,7 @@ class Pst
 
 			raise "have too many active items in index (#{item_count})" if item_count > count_max
 			# split the data into item_count table pointers
-			buf[0, size * item_count].scan(/.{#{size}}/mo).each_with_index do |data, i|
+			Pst.split_per(buf, size, item_count).each_with_index do |data, i|
 				table = TablePtr.new data, is64
 				# for the first value, we expect the start to be equal note that ids -1, so even for the
 				# first we expect it to be equal. thats the 0x21 (dec 33) desc record. this means we assert
@@ -1609,7 +1620,7 @@ only remaining issue is test4 recipients of 200044. strange.
 		end
 
 		def schema
-			@schema ||= index_data.scan(/.{8}/m).map { |data| Column.new data }
+			@schema ||= Pst.split_per(index_data, 8, -1).map { |data| Column.new data }
 		end
 
 		# @param idx [Integer]
@@ -1944,7 +1955,6 @@ it seems that 0x4 is for regular messages (and maybe contacts etc)
 	# @param desc [NodePtr]
 	# @return [Item]
 	def pst_parse_item node
-		printf "parsing node %u \n", node.node_id
 		Item.new node, RawPropertyStore.new(node).to_a
 	end
 

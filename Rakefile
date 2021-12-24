@@ -9,14 +9,14 @@ spec = eval File.read('ruby-msg.gemspec')
 task :default => [:test]
 
 Rake::TestTask.new do |t|
-	t.test_files = FileList["test/test_*.rb"] - ['test/test_pst.rb']
+	t.test_files = FileList["test/test_*.rb"]
 	t.warning = false
 	t.verbose = true
 end
 
 begin
 	Rake::TestTask.new(:coverage) do |t|
-		t.test_files = FileList["test/test_*.rb"] - ['test/test_pst.rb']
+		t.test_files = FileList["test/test_*.rb"]
 		t.warning = false
 		t.verbose = true
 		t.ruby_opts = ['-rsimplecov -e "SimpleCov.start; load(ARGV.shift)"']
