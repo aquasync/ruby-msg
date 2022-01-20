@@ -248,7 +248,7 @@ module Mapi
 			# but if the attachment data is a string, then it won't work. possible?
 			data_str = if @embedded_msg
 				raise NotImplementedError
-				mime.headers['Content-Type'] = 'message/rfc822'
+				mime.headers['Content-Type'] = ['message/rfc822']
 				# lets try making it not base64 for now
 				mime.headers.delete 'Content-Transfer-Encoding'
 				# not filename. rather name, or something else right?
