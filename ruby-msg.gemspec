@@ -12,6 +12,7 @@ Gem::Specification.new do |s|
 	s.authors = ['Charles Lowe']
 	s.email = %q{aquasync@gmail.com}
 	s.homepage = %q{https://github.com/aquasync/ruby-msg}
+	s.metadata = {'homepage_uri' => s.homepage}
 	s.rubyforge_project = %q{ruby-msg}
 
 	s.executables = ['mapitool']
