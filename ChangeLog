@@ -1,3 +1,10 @@
+== 1.5.3 / 2024-03-28
+
+- Remove OrderedHash (github #12, mvz).
+- Change project homepage to github and add .rdoc extension to README.
+- Update wiki links in README to point to github not googlecode.
+- Fix broken Attachment#save (github #14).
+
 == 1.5.2 / 2014-08-20
 
 - Move mime.rb file to avoid conflicts with mime_types gem (github #7,
