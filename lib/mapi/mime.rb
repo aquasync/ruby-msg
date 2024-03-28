@@ -69,6 +69,10 @@ module Mapi
   		end
   	end
 
+    def encode(x)
+      x.encoding == Encoding::UTF_8 ? x : x.encode('utf-8', 'cp1252')
+    end
+
   	def multipart?
   		@content_type && @content_type =~ /^multipart/ ? true : false
   	end
@@ -97,7 +101,7 @@ module Mapi
   		opts = {:boundary_counter => 0}.merge opts
   		if multipart?
   			boundary = Mime.make_boundary opts[:boundary_counter] += 1, self
-  			@body = [preamble, parts.map { |part| "\r\n" + part.to_s(opts) + "\r\n" }, "--\r\n" + epilogue].
+  			@body = [encode(preamble), parts.map { |part| "\r\n" + part.to_s(opts) + "\r\n" }, "--\r\n" + encode(epilogue)].
   				flatten.join("\r\n--" + boundary)
   			content_type, attrs = Mime.split_header @headers['Content-Type'][0]
   			attrs['boundary'] = boundary
@@ -106,9 +110,9 @@ module Mapi
 
   		str = ''
   		@headers.each do |key, vals|
-  			vals.each { |val| str << "#{key}: #{val}\r\n" }
+  			vals.each { |val| str << "#{encode(key)}: #{encode(val)}\r\n" }
   		end
-  		str << "\r\n" + @body
+  		str << "\r\n" + encode(@body)
   	end
 
   	def self.split_header header
