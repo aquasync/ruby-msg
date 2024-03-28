@@ -1,3 +1,7 @@
+== 1.5.3.1 / 2024-03-28
+
+- Duplicate homepage in gemspec metadata to fix rubygems (fixes github #18).
+
 == 1.5.3 / 2024-03-28
 
 - Remove OrderedHash (github #12, mvz).
