@@ -97,7 +97,12 @@ module Mapi
   		opts = {:boundary_counter => 0}.merge opts
   		if multipart?
   			boundary = Mime.make_boundary opts[:boundary_counter] += 1, self
-  			@body = [preamble, parts.map { |part| "\r\n" + part.to_s(opts) + "\r\n" }, "--\r\n" + epilogue].
+			#ensure that all parts are utf-8
+			fallback = Hash.new {'?'}
+			fallback["\u2014"] = "-"
+  			@body = [preamble, parts.map { |part| 
+				"\r\n" + part.to_s(opts).encode('UTF-8', fallback: fallback) + "\r\n"
+			}, "--\r\n" + epilogue].
   				flatten.join("\r\n--" + boundary)
   			content_type, attrs = Mime.split_header @headers['Content-Type'][0]
   			attrs['boundary'] = boundary
