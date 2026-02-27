@@ -235,7 +235,7 @@ module Mapi
 			ignore_tag = nil
 			# skip up to the first htmltag. return nil if we don't ever find one
 			return nil unless scan.scan_until /(?=\{\\\*\\htmltag)/
-			until scan.empty?
+			until scan.eos?
 				if scan.scan /\{/
 				elsif scan.scan /\}/
 				elsif scan.scan /\\\*\\htmltag(\d+) ?/
